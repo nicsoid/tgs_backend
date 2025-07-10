@@ -34,6 +34,9 @@ return [
             'driver' => 'mongodb',
             'dsn' => env('MONGO_DB_CONNECTION'),
             'database' => env('DB_DATABASE', 'telegram_scheduler'),
+            'options' => [
+                'database' => env('DB_AUTHENTICATION_DATABASE', 'admin'),
+            ],
         ],
 
         'sqlite' => [

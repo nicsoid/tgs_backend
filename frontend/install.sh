@@ -1,0 +1,63 @@
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@fullcalendar/daygrid": "^6.0.0",
+    "@fullcalendar/interaction": "^6.0.0",
+    "@fullcalendar/react": "^6.0.0",
+    "@fullcalendar/timegrid": "^6.0.0",
+    "@headlessui/react": "^1.7.0",
+    "@heroicons/react": "^1.0.6",
+    "@stripe/react-stripe-js": "^2.0.0",
+    "@stripe/stripe-js": "^2.0.0",
+    "@testing-library/jest-dom": "^5.17.0",
+    "@testing-library/react": "^13.4.0",
+    "@testing-library/user-event": "^13.5.0",
+    "axios": "^1.4.0",
+    "date-fns": "^2.30.0",
+    "i18next": "^23.0.0",
+    "react": "^18.2.0",
+    "react-circular-progressbar": "^2.1.0",
+    "react-dom": "^18.2.0",
+    "react-i18next": "^13.0.0",
+    "react-router-dom": "^6.14.0",
+    "react-scripts": "5.0.1",
+    "react-timezone-select": "^2.1.0",
+    "recharts": "^2.7.0",
+    "web-vitals": "^2.1.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/forms": "^0.5.4",
+    "autoprefixer": "^10.4.14",
+    "postcss": "^8.4.27",
+    "tailwindcss": "^3.3.3"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "overrides": {
+    "typescript": "^4.9.5"
+  }
+}
