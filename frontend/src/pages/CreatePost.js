@@ -8,6 +8,7 @@ import {
   PhotographIcon,
   CurrencyDollarIcon,
   XIcon,
+  CheckIcon,
 } from "@heroicons/react/outline";
 import { format } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -20,7 +21,7 @@ const CreatePost = () => {
   const [usage, setUsage] = useState(null);
   const [plan, setPlan] = useState(null);
   const [formData, setFormData] = useState({
-    group_id: "",
+    group_ids: [],
     text: "",
     schedule_times: [""],
     media: [],
@@ -79,6 +80,35 @@ const CreatePost = () => {
     }));
   };
 
+  const handleGroupSelection = (groupId) => {
+    setFormData((prev) => {
+      const isSelected = prev.group_ids.includes(groupId);
+      const newGroupIds = isSelected
+        ? prev.group_ids.filter((id) => id !== groupId)
+        : [...prev.group_ids, groupId];
+
+      return {
+        ...prev,
+        group_ids: newGroupIds,
+      };
+    });
+  };
+
+  const selectAllGroups = () => {
+    const allGroupIds = groups.map((group) => group.id || group._id);
+    setFormData((prev) => ({
+      ...prev,
+      group_ids: allGroupIds,
+    }));
+  };
+
+  const deselectAllGroups = () => {
+    setFormData((prev) => ({
+      ...prev,
+      group_ids: [],
+    }));
+  };
+
   const handleScheduleTimeChange = (index, value) => {
     const newTimes = [...formData.schedule_times];
     newTimes[index] = value;
@@ -95,7 +125,9 @@ const CreatePost = () => {
       const scheduledCount = formData.schedule_times.filter(
         (time) => time
       ).length;
-      const totalAfterAdd = currentMessageCount + scheduledCount + 1;
+      const groupsCount = formData.group_ids.length;
+      const totalAfterAdd =
+        currentMessageCount + (scheduledCount + 1) * groupsCount;
 
       if (totalAfterAdd > plan.limits.messages_per_month) {
         alert(
@@ -136,23 +168,22 @@ const CreatePost = () => {
     }));
   };
 
+  const getTotalMessages = () => {
+    const validScheduleTimes = formData.schedule_times.filter((time) => time);
+    return validScheduleTimes.length * formData.group_ids.length;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
 
-    // DEBUG: Log the form data
-    console.log("Form data before submit:", {
-      group_id: formData.group_id,
-      groups_available: groups.map((g) => ({
-        id: g.id,
-        _id: g._id,
-        title: g.title,
-      })),
-      selected_group: groups.find((g) => (g.id || g._id) === formData.group_id),
+    const formDataToSend = new FormData();
+
+    // Add group IDs
+    formData.group_ids.forEach((groupId, index) => {
+      formDataToSend.append(`group_ids[${index}]`, groupId);
     });
 
-    const formDataToSend = new FormData();
-    formDataToSend.append("group_id", formData.group_id);
     formDataToSend.append("text", formData.text);
 
     // Filter out empty schedule times
@@ -168,14 +199,6 @@ const CreatePost = () => {
     formDataToSend.append("advertiser_username", formData.advertiser_username);
     formDataToSend.append("amount_paid", formData.amount_paid);
     formDataToSend.append("currency", formData.currency);
-
-    // DEBUG: Log what we're sending
-    console.log("Sending to API:", {
-      group_id: formData.group_id,
-      text: formData.text.substring(0, 50) + "...",
-      schedule_times_count: validScheduleTimes.length,
-      advertiser_username: formData.advertiser_username,
-    });
 
     try {
       const response = await axios.post(
@@ -196,9 +219,7 @@ const CreatePost = () => {
       if (error.response?.status === 403) {
         alert(error.response.data.message);
       } else if (error.response?.status === 422) {
-        // Validation error - show details
         const errorDetails = error.response.data;
-        console.error("Validation error details:", errorDetails);
         alert(
           t("validation_error") +
             ": " +
@@ -242,6 +263,14 @@ const CreatePost = () => {
             })}
           </p>
         )}
+        {formData.group_ids.length > 0 &&
+          formData.schedule_times.filter((t) => t).length > 0 && (
+            <p className="text-sm text-blue-600 mt-1">
+              This will send {getTotalMessages()} messages (
+              {formData.group_ids.length} groups ×{" "}
+              {formData.schedule_times.filter((t) => t).length} times)
+            </p>
+          )}
       </div>
 
       <form
@@ -250,27 +279,72 @@ const CreatePost = () => {
       >
         {/* Group Selection */}
         <div>
-          <label
-            htmlFor="group_id"
-            className="block text-sm font-medium text-gray-700"
-          >
-            {t("select_group")}
-          </label>
-          <select
-            id="group_id"
-            name="group_id"
-            value={formData.group_id}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-          >
-            <option value="">{t("choose_a_group")}</option>
-            {groups.map((group) => (
-              <option key={group.id || group._id} value={group.id || group._id}>
-                {group.title}
-              </option>
-            ))}
-          </select>
+          <div className="flex justify-between items-center mb-3">
+            <label className="block text-sm font-medium text-gray-700">
+              {t("select_groups")} ({formData.group_ids.length} selected)
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={selectAllGroups}
+                className="text-xs text-blue-600 hover:text-blue-800"
+              >
+                Select All
+              </button>
+              <button
+                type="button"
+                onClick={deselectAllGroups}
+                className="text-xs text-red-600 hover:text-red-800"
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
+
+          {groups.length === 0 ? (
+            <p className="text-sm text-gray-500">
+              No groups available. Please add groups first.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto border border-gray-200 rounded-lg p-3">
+              {groups.map((group) => {
+                const groupId = group.id || group._id;
+                const isSelected = formData.group_ids.includes(groupId);
+
+                return (
+                  <div
+                    key={groupId}
+                    onClick={() => handleGroupSelection(groupId)}
+                    className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                      isSelected
+                        ? "border-blue-500 bg-blue-50"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {group.title}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {group.member_count} members
+                        </p>
+                      </div>
+                      {isSelected && (
+                        <CheckIcon className="h-5 w-5 text-blue-500 flex-shrink-0 ml-2" />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {formData.group_ids.length === 0 && (
+            <p className="mt-2 text-sm text-red-600">
+              Please select at least one group.
+            </p>
+          )}
         </div>
 
         {/* Message Text */}
@@ -329,8 +403,7 @@ const CreatePost = () => {
             onClick={addScheduleTime}
             disabled={
               getRemainingMessages() !== null &&
-              formData.schedule_times.filter((t) => t).length >=
-                getRemainingMessages()
+              getTotalMessages() >= getRemainingMessages()
             }
             className="mt-2 inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -486,7 +559,12 @@ const CreatePost = () => {
           </button>
           <button
             type="submit"
-            disabled={submitting || getRemainingMessages() === 0}
+            disabled={
+              submitting ||
+              formData.group_ids.length === 0 ||
+              getRemainingMessages() === 0 ||
+              getTotalMessages() > (getRemainingMessages() || 0)
+            }
             className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitting ? t("scheduling") : t("schedule_post")}

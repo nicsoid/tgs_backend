@@ -1,4 +1,4 @@
-// Create src/pages/EditPost.js
+// src/pages/EditPost.js
 
 import React, { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -8,6 +8,8 @@ import {
   PhotographIcon,
   CurrencyDollarIcon,
   XIcon,
+  TrashIcon,
+  CheckIcon,
 } from "@heroicons/react/outline";
 import { format } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -19,17 +21,23 @@ const EditPost = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [post, setPost] = useState(null);
+  const [groups, setGroups] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   const [formData, setFormData] = useState({
+    group_ids: [],
     text: "",
     schedule_times: [""],
     advertiser_username: "",
     amount_paid: "",
     currency: "USD",
   });
+  const [existingMedia, setExistingMedia] = useState([]);
+  const [newMedia, setNewMedia] = useState([]);
+  const [keepExistingMedia, setKeepExistingMedia] = useState([]);
 
   useEffect(() => {
     fetchPost();
+    fetchGroups();
     fetchCurrencies();
   }, [postId]);
 
@@ -43,18 +51,36 @@ const EditPost = () => {
 
       // Populate form with existing data
       setFormData({
+        group_ids: postData.group_ids || [],
         text: postData.content.text || "",
         schedule_times: postData.schedule_times || [""],
         advertiser_username: postData.advertiser.telegram_username || "",
         amount_paid: postData.advertiser.amount_paid || "",
         currency: postData.advertiser.currency || "USD",
       });
+
+      // Set existing media
+      const media = postData.content.media || [];
+      setExistingMedia(media);
+      // Initially, keep all existing media
+      setKeepExistingMedia(media.map((_, index) => index));
     } catch (error) {
       console.error("Failed to fetch post:", error);
       alert(t("failed_to_load_post"));
       navigate("/posts");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchGroups = async () => {
+    try {
+      const response = await axios.get(
+        `${process.env.REACT_APP_API_URL}/api/groups`
+      );
+      setGroups(response.data);
+    } catch (error) {
+      console.error("Failed to fetch groups:", error);
     }
   };
 
@@ -75,6 +101,20 @@ const EditPost = () => {
       ...prev,
       [name]: value,
     }));
+  };
+
+  const handleGroupSelection = (groupId) => {
+    setFormData((prev) => {
+      const isSelected = prev.group_ids.includes(groupId);
+      const newGroupIds = isSelected
+        ? prev.group_ids.filter((id) => id !== groupId)
+        : [...prev.group_ids, groupId];
+
+      return {
+        ...prev,
+        group_ids: newGroupIds,
+      };
+    });
   };
 
   const handleScheduleTimeChange = (index, value) => {
@@ -101,22 +141,147 @@ const EditPost = () => {
     }));
   };
 
+  const handleNewMediaChange = (e) => {
+    const files = Array.from(e.target.files);
+    setNewMedia([...newMedia, ...files]);
+  };
+
+  const removeNewMedia = (index) => {
+    setNewMedia(newMedia.filter((_, i) => i !== index));
+  };
+
+  const toggleKeepExistingMedia = (index) => {
+    setKeepExistingMedia((prev) => {
+      if (prev.includes(index)) {
+        return prev.filter((i) => i !== index);
+      } else {
+        return [...prev, index];
+      }
+    });
+  };
+
+  const removeAllExistingMedia = () => {
+    setKeepExistingMedia([]);
+  };
+
+  const keepAllExistingMedia = () => {
+    setKeepExistingMedia(existingMedia.map((_, index) => index));
+  };
+
+  const getMediaPreview = (file) => {
+    const url = URL.createObjectURL(file);
+    const isVideo = file.type.startsWith("video/");
+
+    return (
+      <div className="relative">
+        {isVideo ? (
+          <video
+            src={url}
+            className="w-20 h-20 object-cover rounded"
+            controls={false}
+          />
+        ) : (
+          <img
+            src={url}
+            alt="Preview"
+            className="w-20 h-20 object-cover rounded"
+          />
+        )}
+      </div>
+    );
+  };
+
+  const getExistingMediaPreview = (media) => {
+    const isVideo = media.type === "video";
+    const mediaUrl = media.url.startsWith("http")
+      ? media.url
+      : `${process.env.REACT_APP_API_URL}${media.url}`;
+
+    console.log("Media preview:", {
+      original_url: media.url,
+      full_url: mediaUrl,
+      type: media.type,
+    });
+
+    return (
+      <div className="relative">
+        {isVideo ? (
+          <video
+            src={mediaUrl}
+            className="w-20 h-20 object-cover rounded"
+            controls={false}
+            onError={(e) => {
+              console.error("Video load error:", e.target.src);
+              e.target.style.display = "none";
+              e.target.nextSibling.style.display = "block";
+            }}
+          />
+        ) : (
+          <img
+            src={mediaUrl}
+            alt="Existing media"
+            className="w-20 h-20 object-cover rounded"
+            onError={(e) => {
+              console.error("Image load error:", e.target.src);
+              e.target.src =
+                "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iODAiIHZpZXdCb3g9IjAgMCA4MCA4MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjgwIiBoZWlnaHQ9IjgwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0yNCAzMkwyNCA0OEw1NiA0MEwyNCAzMloiIGZpbGw9IiM5Q0EzQUYiLz4KPC9zdmc+";
+            }}
+          />
+        )}
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-red-100 text-red-600 text-xs"
+          style={{ display: "none" }}
+        >
+          Failed to load
+        </div>
+      </div>
+    );
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
 
-    const updateData = {
-      text: formData.text,
-      schedule_times: formData.schedule_times.filter((time) => time),
-      advertiser_username: formData.advertiser_username,
-      amount_paid: formData.amount_paid,
-      currency: formData.currency,
-    };
+    const formDataToSend = new FormData();
+
+    // Add group IDs
+    formData.group_ids.forEach((groupId, index) => {
+      formDataToSend.append(`group_ids[${index}]`, groupId);
+    });
+
+    formDataToSend.append("text", formData.text);
+
+    // Add schedule times
+    const validScheduleTimes = formData.schedule_times.filter((time) => time);
+    validScheduleTimes.forEach((time, index) => {
+      formDataToSend.append(`schedule_times[${index}]`, time);
+    });
+
+    // Add advertiser info
+    formDataToSend.append("advertiser_username", formData.advertiser_username);
+    formDataToSend.append("amount_paid", formData.amount_paid);
+    formDataToSend.append("currency", formData.currency);
+
+    // Add existing media to keep
+    keepExistingMedia.forEach((index, i) => {
+      formDataToSend.append(`keep_existing_media[${i}]`, index);
+    });
+
+    // Add new media files
+    newMedia.forEach((file, index) => {
+      formDataToSend.append(`media[${index}]`, file);
+    });
 
     try {
-      await axios.put(
-        `${process.env.REACT_APP_API_URL}/api/scheduled-posts/${postId}`,
-        updateData
+      // Use the special update route for media handling
+      await axios.post(
+        `${process.env.REACT_APP_API_URL}/api/scheduled-posts/${postId}/update-with-media`,
+        formDataToSend,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
       );
       alert(t("post_updated_successfully"));
       navigate("/posts");
@@ -189,7 +354,7 @@ const EditPost = () => {
           {t("edit_post")}
         </h1>
         <p className="text-sm text-gray-500 mt-1">
-          {t("editing_post_for")} {post.group?.title}
+          {t("editing_post_for")} {formData.group_ids.length} group(s)
         </p>
       </div>
 
@@ -197,6 +362,52 @@ const EditPost = () => {
         onSubmit={handleSubmit}
         className="space-y-6 bg-white shadow px-6 py-8 rounded-lg"
       >
+        {/* Group Selection */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-3">
+            {t("select_groups")} ({formData.group_ids.length} selected)
+          </label>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto border border-gray-200 rounded-lg p-3">
+            {groups.map((group) => {
+              const groupId = group.id || group._id;
+              const isSelected = formData.group_ids.includes(groupId);
+
+              return (
+                <div
+                  key={groupId}
+                  onClick={() => handleGroupSelection(groupId)}
+                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                    isSelected
+                      ? "border-blue-500 bg-blue-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {group.title}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {group.member_count} members
+                      </p>
+                    </div>
+                    {isSelected && (
+                      <CheckIcon className="h-5 w-5 text-blue-500 flex-shrink-0 ml-2" />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {formData.group_ids.length === 0 && (
+            <p className="mt-2 text-sm text-red-600">
+              Please select at least one group.
+            </p>
+          )}
+        </div>
+
         {/* Message Text */}
         <div>
           <label
@@ -256,6 +467,125 @@ const EditPost = () => {
             <CalendarIcon className="mr-1 h-4 w-4" />
             {t("add_another_time")}
           </button>
+        </div>
+
+        {/* Existing Media */}
+        {existingMedia.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Existing Media Files
+            </label>
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={keepAllExistingMedia}
+                  className="text-sm text-green-600 hover:text-green-800"
+                >
+                  Keep All
+                </button>
+                <button
+                  type="button"
+                  onClick={removeAllExistingMedia}
+                  className="text-sm text-red-600 hover:text-red-800"
+                >
+                  Remove All
+                </button>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {existingMedia.map((media, index) => (
+                  <div
+                    key={index}
+                    className={`relative border-2 rounded-lg p-2 ${
+                      keepExistingMedia.includes(index)
+                        ? "border-green-500 bg-green-50"
+                        : "border-red-500 bg-red-50"
+                    }`}
+                  >
+                    {getExistingMediaPreview(media)}
+                    <div className="mt-2 flex justify-between items-center">
+                      <span className="text-xs text-gray-600">
+                        {media.type}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleKeepExistingMedia(index)}
+                        className={`text-xs px-2 py-1 rounded ${
+                          keepExistingMedia.includes(index)
+                            ? "bg-green-600 text-white"
+                            : "bg-red-600 text-white"
+                        }`}
+                      >
+                        {keepExistingMedia.includes(index) ? "Keep" : "Remove"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* New Media Upload */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Add New Media Files ({t("optional")})
+          </label>
+          <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
+            <div className="space-y-1 text-center">
+              <PhotographIcon className="mx-auto h-12 w-12 text-gray-400" />
+              <div className="flex text-sm text-gray-600">
+                <label
+                  htmlFor="new-media"
+                  className="relative cursor-pointer bg-white rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-indigo-500"
+                >
+                  <span>{t("upload_files")}</span>
+                  <input
+                    id="new-media"
+                    name="new-media"
+                    type="file"
+                    multiple
+                    accept="image/*,video/*"
+                    onChange={handleNewMediaChange}
+                    className="sr-only"
+                  />
+                </label>
+                <p className="pl-1">{t("or_drag_and_drop")}</p>
+              </div>
+              <p className="text-xs text-gray-500">{t("file_size_limit")}</p>
+            </div>
+          </div>
+
+          {/* New Media Preview */}
+          {newMedia.length > 0 && (
+            <div className="mt-4">
+              <h4 className="text-sm font-medium text-gray-900 mb-2">
+                New Files to Upload:
+              </h4>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {newMedia.map((file, index) => (
+                  <div
+                    key={index}
+                    className="relative border border-gray-300 rounded-lg p-2"
+                  >
+                    {getMediaPreview(file)}
+                    <div className="mt-2 flex justify-between items-center">
+                      <span className="text-xs text-gray-600 truncate">
+                        {file.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeNewMedia(index)}
+                        className="text-red-600 hover:text-red-800"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Advertiser Info */}
@@ -339,6 +669,32 @@ const EditPost = () => {
           </div>
         </div>
 
+        {/* Debug section - only show in development */}
+        {process.env.NODE_ENV === "development" && post && (
+          <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+            <h4 className="text-sm font-medium text-gray-700 mb-2">
+              Debug Info
+            </h4>
+            <pre className="text-xs text-gray-600">
+              {JSON.stringify(
+                {
+                  postId: post.id || post._id,
+                  groupIds: formData.group_ids,
+                  mediaCount: existingMedia.length,
+                  apiUrl: process.env.REACT_APP_API_URL,
+                  media: existingMedia.map((m) => ({
+                    type: m.type,
+                    url: m.url,
+                    path: m.path || "no path",
+                  })),
+                },
+                null,
+                2
+              )}
+            </pre>
+          </div>
+        )}
+
         {/* Submit Buttons */}
         <div className="flex justify-end space-x-3">
           <button
@@ -350,7 +706,7 @@ const EditPost = () => {
           </button>
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || formData.group_ids.length === 0}
             className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitting ? t("updating") : t("update_post")}

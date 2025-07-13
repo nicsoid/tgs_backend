@@ -11,6 +11,7 @@ import {
   TrashIcon,
   PlusIcon,
   PencilIcon,
+  UserGroupIcon,
 } from "@heroicons/react/outline";
 import { useTranslation } from "react-i18next";
 
@@ -40,15 +41,7 @@ const ScheduledPosts = () => {
   };
 
   const deletePost = async (post) => {
-    // Handle both id and _id
     const postId = post.id || post._id;
-
-    console.log("Deleting post:", {
-      post: post,
-      postId: postId,
-      hasId: !!post.id,
-      has_id: !!post._id,
-    });
 
     if (!postId) {
       console.error("No post ID found:", post);
@@ -65,7 +58,6 @@ const ScheduledPosts = () => {
         `${process.env.REACT_APP_API_URL}/api/scheduled-posts/${postId}`
       );
 
-      // Remove from local state
       setPosts(posts.filter((p) => (p.id || p._id) !== postId));
       alert(t("post_deleted_successfully"));
     } catch (error) {
@@ -89,6 +81,51 @@ const ScheduledPosts = () => {
         className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClasses[status]}`}
       >
         {t(`status_${status}`)}
+      </span>
+    );
+  };
+
+  const renderGroupsList = (post) => {
+    // Handle both old single group format and new multiple groups format
+    const groups = post.groups_data || post.groups || [];
+    const groupIds = post.group_ids || (post.group_id ? [post.group_id] : []);
+
+    if (groups.length === 0 && post.group) {
+      // Fallback to old format
+      return (
+        <span className="text-sm font-medium text-indigo-600">
+          {post.group.title}
+        </span>
+      );
+    }
+
+    if (groups.length === 1) {
+      return (
+        <span className="text-sm font-medium text-indigo-600">
+          {groups[0].title}
+        </span>
+      );
+    }
+
+    if (groups.length > 1) {
+      return (
+        <div className="flex items-center">
+          <UserGroupIcon className="h-4 w-4 text-indigo-500 mr-1" />
+          <span className="text-sm font-medium text-indigo-600">
+            {groups.length} groups:{" "}
+            {groups
+              .slice(0, 2)
+              .map((g) => g.title)
+              .join(", ")}
+            {groups.length > 2 && ` +${groups.length - 2} more`}
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <span className="text-sm text-gray-500">
+        {groupIds.length} group{groupIds.length !== 1 ? "s" : ""}
       </span>
     );
   };
@@ -144,9 +181,7 @@ const ScheduledPosts = () => {
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium text-indigo-600 truncate">
-                          {post.group?.title}
-                        </p>
+                        {renderGroupsList(post)}
                         <div className="ml-2 flex-shrink-0 flex">
                           {getStatusBadge(post.status)}
                         </div>
@@ -156,6 +191,14 @@ const ScheduledPosts = () => {
                           <p className="flex items-center text-sm text-gray-500">
                             <ClockIcon className="flex-shrink-0 mr-1.5 h-5 w-5 text-gray-400" />
                             {post.schedule_times.length} {t("scheduled_times")}
+                            {post.groups_count && post.groups_count > 1 && (
+                              <span className="ml-2 text-xs bg-gray-100 px-2 py-1 rounded">
+                                {post.total_scheduled ||
+                                  post.schedule_times.length *
+                                    post.groups_count}{" "}
+                                total messages
+                              </span>
+                            )}
                           </p>
                           <p className="mt-2 flex items-center text-sm text-gray-500 sm:mt-0 sm:ml-6">
                             <CurrencyDollarIcon className="flex-shrink-0 mr-1.5 h-5 w-5 text-gray-400" />

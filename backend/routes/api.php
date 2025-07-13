@@ -1,4 +1,6 @@
 <?php
+// routes/api.php - Add this route for handling media updates
+
 use Illuminate\Support\Facades\Route;
 use Illuminate\Http\Request;
 use App\Http\Controllers\AuthController;
@@ -36,10 +38,14 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/groups/sync', [GroupController::class, 'sync']);
     Route::post('/groups/{id}/check-admin', [GroupController::class, 'checkAdminStatus']);
     Route::delete('/groups/{id}', [GroupController::class, 'removeGroup']);
+    Route::post('/groups/add-manually', [GroupController::class, 'addGroupManually']);
     
     // Post routes
     Route::get('/scheduled-posts/usage/stats', [ScheduledPostController::class, 'getUsageStats']);
     Route::apiResource('scheduled-posts', ScheduledPostController::class);
+    
+    // Special route for updating posts with media (supports multipart/form-data)
+    Route::post('/scheduled-posts/{id}/update-with-media', [ScheduledPostController::class, 'update']);
     
     // Subscription routes
     Route::prefix('subscription')->group(function () {
@@ -96,21 +102,6 @@ Route::get('/health', function () {
     ]);
 });
 
-// Route::post('/auth/telegram-debug', function (Request $request) {
-//     Log::info('Telegram auth debug', $request->all());
-    
-//     $bot_token = config('services.telegram.bot_token');
-    
-//     return response()->json([
-//         'received_data' => $request->all(),
-//         'bot_token_exists' => !empty($bot_token),
-//         'bot_token_length' => strlen($bot_token),
-//         'bot_username' => config('services.telegram.bot_username'),
-//         'headers' => $request->headers->all()
-//     ]);
-// });
-Route::post('/groups/add-manually', [GroupController::class, 'addGroupManually'])->middleware('auth:api');
-
 Route::get('/debug/user-groups', function(Request $request) {
     $user = $request->user();
     
@@ -140,8 +131,32 @@ Route::get('/debug/user-groups', function(Request $request) {
     ]);
 })->middleware('auth:api');
 
-Route::get('/test', function () {
-    return response()->json(['message' => 'API is working']);
-});
-
-Route::put('/scheduled-posts/{id}', [ScheduledPostController::class, 'update'])->middleware('auth:api');
+// Debug routes (only in local environment)
+if (app()->environment('local')) {
+    Route::get('/debug/media', [ScheduledPostController::class, 'debugMedia']);
+    Route::get('/debug/storage', function() {
+        $storagePublicPath = storage_path('app/public');
+        $publicStoragePath = public_path('storage');
+        
+        return response()->json([
+            'storage_app_public' => [
+                'path' => $storagePublicPath,
+                'exists' => is_dir($storagePublicPath),
+                'writable' => is_writable($storagePublicPath),
+            ],
+            'public_storage' => [
+                'path' => $publicStoragePath,
+                'exists' => file_exists($publicStoragePath),
+                'is_link' => is_link($publicStoragePath),
+                'link_target' => is_link($publicStoragePath) ? readlink($publicStoragePath) : null,
+            ],
+            'media_directory' => [
+                'path' => $storagePublicPath . '/media',
+                'exists' => is_dir($storagePublicPath . '/media'),
+                'writable' => is_writable($storagePublicPath . '/media'),
+            ],
+            'app_url' => config('app.url'),
+            'storage_url' => Storage::url(''),
+        ]);
+    });
+}

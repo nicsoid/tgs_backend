@@ -5,14 +5,13 @@ namespace App\Models;
 
 use MongoDB\Laravel\Eloquent\Model;
 
-
 class PostLog extends Model
 {
     protected $connection = 'mongodb';
     protected $collection = 'post_logs';
     
     protected $fillable = [
-        'post_id', 'scheduled_time', 'scheduled_time_utc',
+        'post_id', 'group_id', 'scheduled_time', 'scheduled_time_utc',
         'sent_at', 'status', 'telegram_message_id', 'error_message'
     ];
 
@@ -25,5 +24,10 @@ class PostLog extends Model
     public function post()
     {
         return $this->belongsTo(ScheduledPost::class, 'post_id');
+    }
+
+    public function group()
+    {
+        return $this->belongsTo(Group::class, 'group_id');
     }
 }

@@ -23,25 +23,38 @@ class ProcessScheduledPosts extends Command
         $count = 0;
 
         foreach ($posts as $post) {
-            foreach ($post->schedule_times as $index => $scheduledTime) {
+            $groupIds = $post->group_ids ?? [];
+            
+            if (empty($groupIds)) {
+                $this->warn("Post {$post->id} has no groups assigned, skipping.");
+                continue;
+            }
+
+            foreach ($post->schedule_times as $scheduledTime) {
                 $scheduledCarbon = Carbon::parse($scheduledTime, $post->user_timezone);
                 $scheduledUtc = $scheduledCarbon->utc();
                 
-                // Check if this time has already been processed
-                $alreadyProcessed = $post->logs()
-                    ->where('scheduled_time', $scheduledTime)
-                    ->exists();
+                // Only process if time has passed
+                if ($scheduledUtc->isPast()) {
+                    foreach ($groupIds as $groupId) {
+                        // Check if this time/group combination has already been processed
+                        $alreadyProcessed = $post->logs()
+                            ->where('scheduled_time', $scheduledTime)
+                            ->where('group_id', $groupId)
+                            ->exists();
 
-                if (!$alreadyProcessed && $scheduledUtc->isPast()) {
-                    // Dispatch job to send the post
-                    SendScheduledPost::dispatch($post, $scheduledTime);
-                    $count++;
-                    
-                    $this->info("Dispatched post {$post->id} scheduled for {$scheduledTime}");
+                        if (!$alreadyProcessed) {
+                            // Dispatch job to send the post to this specific group
+                            SendScheduledPost::dispatch($post, $scheduledTime, $groupId);
+                            $count++;
+                            
+                            $this->info("Dispatched post {$post->id} to group {$groupId} scheduled for {$scheduledTime}");
+                        }
+                    }
                 }
             }
         }
 
-        $this->info("Dispatched {$count} posts for sending.");
+        $this->info("Dispatched {$count} individual messages for sending.");
     }
 }

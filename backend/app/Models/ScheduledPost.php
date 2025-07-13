@@ -12,16 +12,17 @@ class ScheduledPost extends Model
     protected $collection = 'scheduled_posts';
     
     protected $fillable = [
-        'user_id', 'group_id', 'content', 'schedule_times',
+        'user_id', 'group_ids', 'content', 'schedule_times',
         'schedule_times_utc', 'user_timezone', 'advertiser', 
-        'status', 'send_count', 'total_scheduled'
+        'status', 'send_count', 'total_scheduled', 'groups_count'
     ];
 
     protected $casts = [
         'content' => 'array',
         'schedule_times' => 'array',
         'schedule_times_utc' => 'array',
-        'advertiser' => 'array'
+        'advertiser' => 'array',
+        'group_ids' => 'array'
     ];
 
     protected $attributes = [
@@ -34,9 +35,27 @@ class ScheduledPost extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function group()
+    // Relationship to get all groups this post is scheduled for
+    public function groups()
     {
-        return $this->belongsTo(Group::class);
+        return $this->belongsToMany(Group::class, null, 'post_id', 'group_ids', '_id', '_id');
+    }
+
+    // Helper method to get groups by IDs
+    public function getGroupsAttribute()
+    {
+        if (!isset($this->attributes['group_ids']) || empty($this->attributes['group_ids'])) {
+            return collect();
+        }
+        
+        return Group::whereIn('_id', $this->attributes['group_ids'])->get();
+    }
+
+    // Backward compatibility - get first group as 'group'
+    public function getGroupAttribute()
+    {
+        $groups = $this->groups;
+        return $groups->first();
     }
 
     public function logs()
@@ -58,7 +77,8 @@ class ScheduledPost extends Model
                 return Carbon::parse($date)->timezone($this->user_timezone);
             }),
             'advertiser' => $this->advertiser,
-            'status' => $this->status
+            'status' => $this->status,
+            'groups_count' => count($this->group_ids ?? [])
         ];
     }
 
@@ -76,7 +96,31 @@ class ScheduledPost extends Model
                 })
                 ->toArray();
             
-            $post->total_scheduled = count($post->schedule_times);
+            // Calculate total scheduled messages (groups * schedule times)
+            $groupCount = count($post->group_ids ?? []);
+            $timeCount = count($post->schedule_times ?? []);
+            $post->total_scheduled = $groupCount * $timeCount;
+            $post->groups_count = $groupCount;
+        });
+
+        static::updating(function ($post) {
+            // Recalculate if schedule times or groups changed
+            if ($post->isDirty(['schedule_times', 'group_ids'])) {
+                if ($post->isDirty('schedule_times')) {
+                    $post->schedule_times_utc = collect($post->schedule_times)
+                        ->map(function ($time) use ($post) {
+                            return Carbon::parse($time, $post->user_timezone)
+                                ->setTimezone('UTC')
+                                ->toDateTimeString();
+                        })
+                        ->toArray();
+                }
+                
+                $groupCount = count($post->group_ids ?? []);
+                $timeCount = count($post->schedule_times ?? []);
+                $post->total_scheduled = $groupCount * $timeCount;
+                $post->groups_count = $groupCount;
+            }
         });
     }
 }
