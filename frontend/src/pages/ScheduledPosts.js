@@ -10,6 +10,7 @@ import {
   CurrencyDollarIcon,
   TrashIcon,
   PlusIcon,
+  PencilIcon,
 } from "@heroicons/react/outline";
 import { useTranslation } from "react-i18next";
 
@@ -38,7 +39,23 @@ const ScheduledPosts = () => {
     }
   };
 
-  const deletePost = async (postId) => {
+  const deletePost = async (post) => {
+    // Handle both id and _id
+    const postId = post.id || post._id;
+
+    console.log("Deleting post:", {
+      post: post,
+      postId: postId,
+      hasId: !!post.id,
+      has_id: !!post._id,
+    });
+
+    if (!postId) {
+      console.error("No post ID found:", post);
+      alert(t("no_post_id_error"));
+      return;
+    }
+
     if (!window.confirm(t("confirm_delete_post"))) {
       return;
     }
@@ -47,7 +64,10 @@ const ScheduledPosts = () => {
       await axios.delete(
         `${process.env.REACT_APP_API_URL}/api/scheduled-posts/${postId}`
       );
-      setPosts(posts.filter((post) => post._id !== postId));
+
+      // Remove from local state
+      setPosts(posts.filter((p) => (p.id || p._id) !== postId));
+      alert(t("post_deleted_successfully"));
     } catch (error) {
       console.error("Failed to delete post:", error);
       alert(
@@ -185,9 +205,15 @@ const ScheduledPosts = () => {
                       </div>
                     </div>
                     {post.status === "pending" && (
-                      <div className="ml-4">
+                      <div className="ml-4 flex items-center space-x-2">
+                        <Link
+                          to={`/posts/edit/${post.id || post._id}`}
+                          className="inline-flex items-center p-2 border border-transparent rounded-full shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        >
+                          <PencilIcon className="h-5 w-5" />
+                        </Link>
                         <button
-                          onClick={() => deletePost(post._id)}
+                          onClick={() => deletePost(post)}
                           className="inline-flex items-center p-2 border border-transparent rounded-full shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                         >
                           <TrashIcon className="h-5 w-5" />

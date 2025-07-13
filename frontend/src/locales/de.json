@@ -150,5 +150,10 @@
   "status_partially_sent": "Partially Sent",
   "status_completed": "Completed",
   "status_failed": "Failed",
-  "total_paid": "Total Paid"
+  "total_paid": "Total Paid",
+  "admin_status_verified_and_updated": "Admin status verified and updated",
+  "group_added_successfully": "Group added successfully",
+  "group_not_found": "Group not found",
+  "no_group_id_error": "Error: No group ID found",
+  "failed_to_check_admin_status": "Failed to check admin status"
 }

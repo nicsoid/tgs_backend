@@ -19,6 +19,7 @@ import Statistics from "./pages/Statistics";
 import Calendar from "./pages/Calendar";
 import Settings from "./pages/Settings";
 import Subscription from "./pages/Subscription";
+import EditPost from "./pages/EditPost";
 import "./i18n";
 
 function App() {
@@ -44,6 +45,7 @@ function App() {
             <Route path="calendar" element={<Calendar />} />
             <Route path="settings" element={<Settings />} />
             <Route path="subscription" element={<Subscription />} />
+            <Route path="posts/edit/:postId" element={<EditPost />} />
           </Route>
         </Routes>
       </Router>

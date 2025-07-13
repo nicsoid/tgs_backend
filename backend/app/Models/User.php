@@ -62,8 +62,33 @@ class User extends Model implements AuthenticatableContract, JWTSubject
 
     public function groups()
     {
+        // For MongoDB, the pivot table approach might be different
+        // Try this approach first:
         return $this->belongsToMany(Group::class, 'user_groups', 'user_id', 'group_id')
+                    ->withPivot('is_admin', 'permissions', 'added_at', 'last_verified')
+                    ->withTimestamps();
+    }
+
+    // Alternative approach for MongoDB - if the above doesn't work:
+    public function adminGroups()
+    {
+        return $this->belongsToMany(Group::class, 'user_groups', 'user_id', 'group_id')
+                    ->wherePivot('is_admin', true)
                     ->withPivot('is_admin', 'permissions', 'added_at', 'last_verified');
+    }
+
+    // Or if using a direct MongoDB approach:
+    public function getGroupsAttribute()
+    {
+        $userGroups = \DB::connection('mongodb')
+            ->table('user_groups')
+            ->where('user_id', $this->id)
+            ->where('is_admin', true)
+            ->get();
+        
+        $groupIds = $userGroups->pluck('group_id')->toArray();
+        
+        return Group::whereIn('_id', $groupIds)->get();
     }
 
     public function scheduledPosts()

@@ -22,8 +22,9 @@ class ScheduledPostController extends Controller
 
     public function store(Request $request)
     {
+        // CUSTOM VALIDATION for MongoDB group_id
         $request->validate([
-            'group_id' => 'required|exists:groups,_id',
+            'group_id' => 'required|string',
             'text' => 'required|string',
             'schedule_times' => 'required|array|min:1',
             'schedule_times.*' => 'required|date|after:now',
@@ -35,6 +36,31 @@ class ScheduledPostController extends Controller
         ]);
 
         $user = $request->user();
+        
+        // CUSTOM group validation for MongoDB
+        $group = Group::where('_id', $request->group_id)
+                    ->orWhere('id', $request->group_id)
+                    ->first();
+        
+        if (!$group) {
+            return response()->json([
+                'error' => 'Invalid group',
+                'message' => 'The selected group does not exist.',
+                'debug' => [
+                    'provided_group_id' => $request->group_id,
+                    'group_id_type' => gettype($request->group_id)
+                ]
+            ], 422);
+        }
+        
+        \Log::info('Group validation passed', [
+            'provided_id' => $request->group_id,
+            'found_group' => [
+                'id' => $group->id,
+                '_id' => $group->_id,
+                'title' => $group->title
+            ]
+        ]);
         
         // Check message limit
         $scheduleCount = count($request->schedule_times);
@@ -53,16 +79,28 @@ class ScheduledPostController extends Controller
             ], 403);
         }
         
-        $group = Group::findOrFail($request->group_id);
-
-        // Verify user is admin
-        $isAdmin = $user->groups()
-            ->wherePivot('group_id', $group->id)
-            ->wherePivot('is_admin', true)
+        // Verify user is admin in this group
+        $isAdmin = \DB::connection('mongodb')
+            ->table('user_groups')
+            ->where('user_id', $user->id)
+            ->where('group_id', $group->id) // Use the found group's ID
+            ->where('is_admin', true)
             ->exists();
 
         if (!$isAdmin) {
-            return response()->json(['error' => 'You are not an admin of this group'], 403);
+            \Log::error('User not admin in group', [
+                'user_id' => $user->id,
+                'group_id' => $group->id,
+                'relationships' => \DB::connection('mongodb')
+                    ->table('user_groups')
+                    ->where('user_id', $user->id)
+                    ->get()
+            ]);
+            
+            return response()->json([
+                'error' => 'Not authorized', 
+                'message' => 'You are not an admin of this group'
+            ], 403);
         }
 
         // Handle media uploads
@@ -80,7 +118,7 @@ class ScheduledPostController extends Controller
 
         $post = ScheduledPost::create([
             'user_id' => $user->id,
-            'group_id' => $group->id,
+            'group_id' => $group->id, // Use the found group's ID
             'content' => [
                 'text' => $request->text,
                 'media' => $mediaData
@@ -99,6 +137,13 @@ class ScheduledPostController extends Controller
         for ($i = 0; $i < $scheduleCount; $i++) {
             $user->incrementMessageCount();
         }
+
+        \Log::info('Post created successfully', [
+            'post_id' => $post->id,
+            'user_id' => $user->id,
+            'group_id' => $group->id,
+            'schedule_count' => $scheduleCount
+        ]);
 
         return response()->json($post, 201);
     }

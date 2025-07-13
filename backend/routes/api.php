@@ -96,16 +96,52 @@ Route::get('/health', function () {
     ]);
 });
 
-Route::post('/auth/telegram-debug', function (Request $request) {
-    Log::info('Telegram auth debug', $request->all());
+// Route::post('/auth/telegram-debug', function (Request $request) {
+//     Log::info('Telegram auth debug', $request->all());
     
-    $bot_token = config('services.telegram.bot_token');
+//     $bot_token = config('services.telegram.bot_token');
+    
+//     return response()->json([
+//         'received_data' => $request->all(),
+//         'bot_token_exists' => !empty($bot_token),
+//         'bot_token_length' => strlen($bot_token),
+//         'bot_username' => config('services.telegram.bot_username'),
+//         'headers' => $request->headers->all()
+//     ]);
+// });
+Route::post('/groups/add-manually', [GroupController::class, 'addGroupManually'])->middleware('auth:api');
+
+Route::get('/debug/user-groups', function(Request $request) {
+    $user = $request->user();
+    
+    // Check user's groups_count in usage
+    $usage = $user->usage;
+    
+    // Check actual relationships in user_groups collection
+    $userGroupRelations = \DB::connection('mongodb')
+        ->table('user_groups')
+        ->where('user_id', $user->id)
+        ->get();
+    
+    // Check groups that have this user's ID stored directly (old way)
+    $groupsWithDirectUserId = \App\Models\Group::where('user_id', $user->id)
+        ->orWhere('user_id', 'all', [$user->id])
+        ->get();
     
     return response()->json([
-        'received_data' => $request->all(),
-        'bot_token_exists' => !empty($bot_token),
-        'bot_token_length' => strlen($bot_token),
-        'bot_username' => config('services.telegram.bot_username'),
-        'headers' => $request->headers->all()
+        'user_id' => $user->id,
+        'usage_groups_count' => $usage['groups_count'] ?? 0,
+        'actual_relationships_count' => count($userGroupRelations),
+        'relationships' => $userGroupRelations,
+        'groups_with_direct_user_id_count' => $groupsWithDirectUserId->count(),
+        'groups_with_direct_user_id' => $groupsWithDirectUserId->toArray(),
+        'user_can_add_group' => $user->canAddGroup(),
+        'subscription_plan' => $user->getSubscriptionPlan()->name ?? 'unknown'
     ]);
+})->middleware('auth:api');
+
+Route::get('/test', function () {
+    return response()->json(['message' => 'API is working']);
 });
+
+Route::put('/scheduled-posts/{id}', [ScheduledPostController::class, 'update'])->middleware('auth:api');

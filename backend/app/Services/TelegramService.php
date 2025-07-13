@@ -165,19 +165,105 @@ class TelegramService
         }
     }
 
+    public function getBotChats()
+    {
+        try {
+            // Get updates to see what chats the bot is in
+            $response = $this->client->get($this->apiUrl . '/getUpdates', [
+                'query' => [
+                    'limit' => 100,
+                    'allowed_updates' => ['message', 'my_chat_member']
+                ]
+            ]);
+
+            $data = json_decode($response->getBody(), true);
+            
+            if (!$data['ok']) {
+                \Log::error('Failed to get updates', ['error' => $data['description'] ?? 'unknown']);
+                return [];
+            }
+            
+            $chats = [];
+            $seenChats = [];
+            
+            foreach ($data['result'] as $update) {
+                $chat = null;
+                
+                // Extract chat from different update types
+                if (isset($update['message']['chat'])) {
+                    $chat = $update['message']['chat'];
+                } elseif (isset($update['my_chat_member']['chat'])) {
+                    $chat = $update['my_chat_member']['chat'];
+                }
+                
+                if ($chat && in_array($chat['type'], ['group', 'supergroup']) && !in_array($chat['id'], $seenChats)) {
+                    $chats[] = $chat;
+                    $seenChats[] = $chat['id'];
+                }
+            }
+            
+            \Log::info('getBotChats found chats', [
+                'total_updates' => count($data['result']),
+                'unique_chats' => count($chats)
+            ]);
+            
+            return $chats;
+            
+        } catch (\Exception $e) {
+            \Log::error('Failed to get bot chats', ['error' => $e->getMessage()]);
+            return [];
+        }
+    }
+
     public function getChatInfo($chatId)
     {
         try {
+            // Don't modify the chatId - use it exactly as provided
+            \Log::info('Getting chat info', ['chat_id' => $chatId]);
+            
             $response = $this->client->get($this->apiUrl . '/getChat', [
                 'query' => ['chat_id' => $chatId]
             ]);
 
-            return json_decode($response->getBody(), true)['result'];
+            $data = json_decode($response->getBody(), true);
+            
+            if ($data['ok']) {
+                \Log::info('Successfully got chat info', [
+                    'chat_id' => $chatId,
+                    'chat_title' => $data['result']['title'] ?? 'unknown',
+                    'chat_type' => $data['result']['type'] ?? 'unknown'
+                ]);
+                return $data['result'];
+            } else {
+                \Log::error('Telegram API returned error', [
+                    'chat_id' => $chatId,
+                    'error_code' => $data['error_code'] ?? 'unknown',
+                    'description' => $data['description'] ?? 'unknown'
+                ]);
+                return null;
+            }
         } catch (\Exception $e) {
-            Log::error('Failed to get chat info', [
+            \Log::error('Failed to get chat info', [
                 'chat_id' => $chatId,
                 'error' => $e->getMessage()
             ]);
+            return null;
+        }
+    }
+
+    public function getBotInfo()
+    {
+        try {
+            $response = $this->client->get($this->apiUrl . '/getMe');
+            $data = json_decode($response->getBody(), true);
+            
+            if ($data['ok']) {
+                return $data['result'];
+            }
+            
+            return null;
+        } catch (\Exception $e) {
+            \Log::error('Failed to get bot info', ['error' => $e->getMessage()]);
             return null;
         }
     }

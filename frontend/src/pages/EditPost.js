@@ -1,7 +1,7 @@
-// src/pages/CreatePost.js
+// Create src/pages/EditPost.js
 
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
 import {
   CalendarIcon,
@@ -11,52 +11,50 @@ import {
 } from "@heroicons/react/outline";
 import { format } from "date-fns";
 import { useTranslation } from "react-i18next";
-import UsageAlert from "../components/UsageAlert";
 
-const CreatePost = () => {
+const EditPost = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [groups, setGroups] = useState([]);
-  const [usage, setUsage] = useState(null);
-  const [plan, setPlan] = useState(null);
+  const { postId } = useParams();
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [post, setPost] = useState(null);
+  const [currencies, setCurrencies] = useState([]);
   const [formData, setFormData] = useState({
-    group_id: "",
     text: "",
     schedule_times: [""],
-    media: [],
     advertiser_username: "",
     amount_paid: "",
     currency: "USD",
   });
-  const [submitting, setSubmitting] = useState(false);
-  const [currencies, setCurrencies] = useState([]);
 
   useEffect(() => {
-    fetchGroups();
-    fetchUsageStats();
+    fetchPost();
     fetchCurrencies();
-  }, []);
+  }, [postId]);
 
-  const fetchGroups = async () => {
+  const fetchPost = async () => {
     try {
       const response = await axios.get(
-        `${process.env.REACT_APP_API_URL}/api/groups`
+        `${process.env.REACT_APP_API_URL}/api/scheduled-posts/${postId}`
       );
-      setGroups(response.data);
-    } catch (error) {
-      console.error("Failed to fetch groups:", error);
-    }
-  };
+      const postData = response.data;
+      setPost(postData);
 
-  const fetchUsageStats = async () => {
-    try {
-      const response = await axios.get(
-        `${process.env.REACT_APP_API_URL}/api/scheduled-posts/usage/stats`
-      );
-      setUsage(response.data.usage);
-      setPlan(response.data.plan);
+      // Populate form with existing data
+      setFormData({
+        text: postData.content.text || "",
+        schedule_times: postData.schedule_times || [""],
+        advertiser_username: postData.advertiser.telegram_username || "",
+        amount_paid: postData.advertiser.amount_paid || "",
+        currency: postData.advertiser.currency || "USD",
+      });
     } catch (error) {
-      console.error("Failed to fetch usage stats:", error);
+      console.error("Failed to fetch post:", error);
+      alert(t("failed_to_load_post"));
+      navigate("/posts");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -89,24 +87,6 @@ const CreatePost = () => {
   };
 
   const addScheduleTime = () => {
-    // Check if adding another schedule time would exceed limits
-    if (usage && plan) {
-      const currentMessageCount = usage.messages.used;
-      const scheduledCount = formData.schedule_times.filter(
-        (time) => time
-      ).length;
-      const totalAfterAdd = currentMessageCount + scheduledCount + 1;
-
-      if (totalAfterAdd > plan.limits.messages_per_month) {
-        alert(
-          t("message_limit_would_exceed", {
-            remaining: plan.limits.messages_per_month - currentMessageCount,
-          })
-        );
-        return;
-      }
-    }
-
     setFormData((prev) => ({
       ...prev,
       schedule_times: [...prev.schedule_times, ""],
@@ -121,92 +101,34 @@ const CreatePost = () => {
     }));
   };
 
-  const handleMediaChange = (e) => {
-    const files = Array.from(e.target.files);
-    setFormData((prev) => ({
-      ...prev,
-      media: [...prev.media, ...files],
-    }));
-  };
-
-  const removeMedia = (index) => {
-    setFormData((prev) => ({
-      ...prev,
-      media: prev.media.filter((_, i) => i !== index),
-    }));
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
 
-    // DEBUG: Log the form data
-    console.log("Form data before submit:", {
-      group_id: formData.group_id,
-      groups_available: groups.map((g) => ({
-        id: g.id,
-        _id: g._id,
-        title: g.title,
-      })),
-      selected_group: groups.find((g) => (g.id || g._id) === formData.group_id),
-    });
-
-    const formDataToSend = new FormData();
-    formDataToSend.append("group_id", formData.group_id);
-    formDataToSend.append("text", formData.text);
-
-    // Filter out empty schedule times
-    const validScheduleTimes = formData.schedule_times.filter((time) => time);
-    validScheduleTimes.forEach((time, index) => {
-      formDataToSend.append(`schedule_times[${index}]`, time);
-    });
-
-    formData.media.forEach((file, index) => {
-      formDataToSend.append(`media[${index}]`, file);
-    });
-
-    formDataToSend.append("advertiser_username", formData.advertiser_username);
-    formDataToSend.append("amount_paid", formData.amount_paid);
-    formDataToSend.append("currency", formData.currency);
-
-    // DEBUG: Log what we're sending
-    console.log("Sending to API:", {
-      group_id: formData.group_id,
-      text: formData.text.substring(0, 50) + "...",
-      schedule_times_count: validScheduleTimes.length,
+    const updateData = {
+      text: formData.text,
+      schedule_times: formData.schedule_times.filter((time) => time),
       advertiser_username: formData.advertiser_username,
-    });
+      amount_paid: formData.amount_paid,
+      currency: formData.currency,
+    };
 
     try {
-      const response = await axios.post(
-        `${process.env.REACT_APP_API_URL}/api/scheduled-posts`,
-        formDataToSend,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
+      await axios.put(
+        `${process.env.REACT_APP_API_URL}/api/scheduled-posts/${postId}`,
+        updateData
       );
-      alert(t("post_scheduled_successfully"));
+      alert(t("post_updated_successfully"));
       navigate("/posts");
     } catch (error) {
-      console.error("Failed to create post:", error);
-      console.error("Error response:", error.response?.data);
-
+      console.error("Failed to update post:", error);
       if (error.response?.status === 403) {
         alert(error.response.data.message);
-      } else if (error.response?.status === 422) {
-        // Validation error - show details
-        const errorDetails = error.response.data;
-        console.error("Validation error details:", errorDetails);
-        alert(
-          t("validation_error") +
-            ": " +
-            (errorDetails.message || "Invalid data provided")
-        );
+      } else if (error.response?.status === 400) {
+        alert(error.response.data.error || t("cannot_update_post"));
       } else {
         alert(
-          t("failed_to_schedule_post") +
+          t("failed_to_update_post") +
             " " +
             (error.response?.data?.message || "")
         );
@@ -216,63 +138,65 @@ const CreatePost = () => {
     }
   };
 
-  const getRemainingMessages = () => {
-    if (!usage || !plan) return null;
-    return plan.limits.messages_per_month - usage.messages.used;
-  };
-
   const getMinDateTime = () => {
     const now = new Date();
-    now.setMinutes(now.getMinutes() + 5); // Minimum 5 minutes from now
+    now.setMinutes(now.getMinutes() + 5);
     return now.toISOString().slice(0, 16);
   };
 
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  if (!post) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-500">{t("post_not_found")}</p>
+      </div>
+    );
+  }
+
+  // Don't allow editing if post has started sending
+  if (post.status !== "pending") {
+    return (
+      <div className="max-w-3xl mx-auto">
+        <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+          <h3 className="text-sm font-medium text-yellow-800">
+            {t("cannot_edit_post")}
+          </h3>
+          <p className="mt-1 text-sm text-yellow-700">
+            {t("cannot_edit_post_description")}
+          </p>
+          <button
+            onClick={() => navigate("/posts")}
+            className="mt-2 text-sm font-medium text-yellow-800 hover:text-yellow-900"
+          >
+            ← {t("back_to_posts")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto">
-      {usage && plan && <UsageAlert usage={usage} plan={plan} />}
-
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">
-          {t("schedule_new_post")}
+          {t("edit_post")}
         </h1>
-        {getRemainingMessages() !== null && (
-          <p className="text-sm text-gray-500 mt-1">
-            {t("messages_remaining_this_month", {
-              count: getRemainingMessages(),
-            })}
-          </p>
-        )}
+        <p className="text-sm text-gray-500 mt-1">
+          {t("editing_post_for")} {post.group?.title}
+        </p>
       </div>
 
       <form
         onSubmit={handleSubmit}
         className="space-y-6 bg-white shadow px-6 py-8 rounded-lg"
       >
-        {/* Group Selection */}
-        <div>
-          <label
-            htmlFor="group_id"
-            className="block text-sm font-medium text-gray-700"
-          >
-            {t("select_group")}
-          </label>
-          <select
-            id="group_id"
-            name="group_id"
-            value={formData.group_id}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-          >
-            <option value="">{t("choose_a_group")}</option>
-            {groups.map((group) => (
-              <option key={group.id || group._id} value={group.id || group._id}>
-                {group.title}
-              </option>
-            ))}
-          </select>
-        </div>
-
         {/* Message Text */}
         <div>
           <label
@@ -327,71 +251,11 @@ const CreatePost = () => {
           <button
             type="button"
             onClick={addScheduleTime}
-            disabled={
-              getRemainingMessages() !== null &&
-              formData.schedule_times.filter((t) => t).length >=
-                getRemainingMessages()
-            }
-            className="mt-2 inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="mt-2 inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           >
             <CalendarIcon className="mr-1 h-4 w-4" />
             {t("add_another_time")}
           </button>
-        </div>
-
-        {/* Media Upload */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            {t("media_files")} ({t("optional")})
-          </label>
-          <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
-            <div className="space-y-1 text-center">
-              <PhotographIcon className="mx-auto h-12 w-12 text-gray-400" />
-              <div className="flex text-sm text-gray-600">
-                <label
-                  htmlFor="media"
-                  className="relative cursor-pointer bg-white rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-indigo-500"
-                >
-                  <span>{t("upload_files")}</span>
-                  <input
-                    id="media"
-                    name="media"
-                    type="file"
-                    multiple
-                    accept="image/*,video/*"
-                    onChange={handleMediaChange}
-                    className="sr-only"
-                  />
-                </label>
-                <p className="pl-1">{t("or_drag_and_drop")}</p>
-              </div>
-              <p className="text-xs text-gray-500">{t("file_size_limit")}</p>
-            </div>
-          </div>
-          {formData.media.length > 0 && (
-            <div className="mt-4">
-              <h4 className="text-sm font-medium text-gray-900">
-                {t("selected_files")}:
-              </h4>
-              <ul className="mt-2 divide-y divide-gray-200">
-                {formData.media.map((file, index) => (
-                  <li
-                    key={index}
-                    className="py-2 flex justify-between items-center"
-                  >
-                    <span className="text-sm text-gray-600">{file.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeMedia(index)}
-                      className="text-red-600 hover:text-red-800 text-sm"
-                    >
-                      {t("remove")}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </div>
 
         {/* Advertiser Info */}
@@ -486,10 +350,10 @@ const CreatePost = () => {
           </button>
           <button
             type="submit"
-            disabled={submitting || getRemainingMessages() === 0}
+            disabled={submitting}
             className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {submitting ? t("scheduling") : t("schedule_post")}
+            {submitting ? t("updating") : t("update_post")}
           </button>
         </div>
       </form>
@@ -497,4 +361,4 @@ const CreatePost = () => {
   );
 };
 
-export default CreatePost;
+export default EditPost;
