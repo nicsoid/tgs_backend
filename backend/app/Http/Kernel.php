@@ -1,4 +1,5 @@
 <?php
+// app/Http/Kernel.php
 
 namespace App\Http;
 
@@ -68,5 +69,6 @@ class Kernel extends HttpKernel
         'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
         'jwt.auth' => \Tymon\JWTAuth\Http\Middleware\Authenticate::class,
         'jwt.refresh' => \Tymon\JWTAuth\Http\Middleware\RefreshToken::class,
+        'verify.group.admin' => \App\Http\Middleware\VerifyGroupAdmin::class, // Add this line
     ];
 }
