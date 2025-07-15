@@ -21,6 +21,24 @@ class Kernel extends ConsoleKernel
         
         // Monitor scheduler health every 5 minutes
         $schedule->command('scheduler:monitor')->everyFiveMinutes();
+        
+        // Verify stale admin relationships every 4 hours
+        $schedule->command('admin:verify --stale-only')
+                ->everyFourHours()
+                ->withoutOverlapping()
+                ->runInBackground();
+        
+        // Full admin verification daily at 2 AM (when usage is typically low)
+        $schedule->command('admin:verify --all')
+                ->dailyAt('02:00')
+                ->withoutOverlapping()
+                ->runInBackground();
+                
+        // Refresh group info (including member counts) for stale groups every 6 hours
+        $schedule->command('groups:refresh-info --stale-only')
+                ->everySixHours()
+                ->withoutOverlapping()
+                ->runInBackground();
     }
 
     /**

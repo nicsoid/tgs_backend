@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Services\TelegramService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -11,6 +12,13 @@ use Carbon\Carbon;
 
 class AuthController extends Controller
 {
+    protected $telegramService;
+
+    public function __construct(TelegramService $telegramService)
+    {
+        $this->telegramService = $telegramService;
+    }
+
     public function telegramAuth(Request $request)
     {
         Log::info('Telegram auth attempt', $request->all());
@@ -72,18 +80,32 @@ class AuthController extends Controller
                     'photo_url' => $request->photo_url ?? $user->photo_url,
                     'auth_date' => Carbon::now()
                 ]);
+
+                // Automatically verify admin status for existing users
+                Log::info('Starting automatic admin verification for existing user', ['user_id' => $user->id]);
+                $verificationResult = $this->telegramService->verifyUserAdminStatusForAllGroups($user);
+                
+                Log::info('Automatic admin verification completed', [
+                    'user_id' => $user->id,
+                    'result' => $verificationResult
+                ]);
             } else {
                 // Create new user
                 $user = User::create(array_merge(['telegram_id' => (string)$request->id], $userData));
+                Log::info('New user created', ['user_id' => $user->id]);
             }
 
             $token = JWTAuth::fromUser($user);
 
-            Log::info('Telegram auth successful', ['user_id' => $user->id]);
+            Log::info('Telegram auth successful', [
+                'user_id' => $user->id,
+                'admin_verification' => $verificationResult ?? 'new_user'
+            ]);
 
             return response()->json([
                 'token' => $token,
-                'user' => $user
+                'user' => $user,
+                'admin_verification_result' => $verificationResult ?? null
             ]);
             
         } catch (\Exception $e) {

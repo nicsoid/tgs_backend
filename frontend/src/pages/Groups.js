@@ -1,4 +1,4 @@
-// Updated Groups.js with verification state tracking
+// Updated Groups.js with enhanced admin verification handling
 
 import React, { useState, useEffect } from "react";
 import axios from "axios";
@@ -7,6 +7,7 @@ import {
   RefreshIcon,
   TrashIcon,
   CheckIcon,
+  ExclamationTriangleIcon,
 } from "@heroicons/react/outline";
 import { useTranslation } from "react-i18next";
 import UsageAlert from "../components/UsageAlert";
@@ -22,7 +23,8 @@ const Groups = () => {
   const [groupIdentifier, setGroupIdentifier] = useState("");
   const [adding, setAdding] = useState(false);
   const [verifyingGroupId, setVerifyingGroupId] = useState(null);
-  const [verifiedGroups, setVerifiedGroups] = useState(new Set());
+  const [verificationResults, setVerificationResults] = useState(null);
+  const [adminStatuses, setAdminStatuses] = useState(new Map());
 
   useEffect(() => {
     fetchGroups();
@@ -34,13 +36,54 @@ const Groups = () => {
       const response = await axios.get(
         `${process.env.REACT_APP_API_URL}/api/groups`
       );
-      setGroups(response.data);
 
-      // Mark all fetched groups as verified (since they're in the system)
-      const groupIds = response.data.map((group) => group.id || group._id);
-      setVerifiedGroups(new Set(groupIds));
+      // Handle both old format (array) and new format (object with groups property)
+      let groupsData;
+      let verificationResult = null;
+
+      if (Array.isArray(response.data)) {
+        // Old format - just an array of groups
+        groupsData = response.data;
+
+        // Check for verification results in headers
+        const updatedCount = response.headers["x-verification-updated"];
+        const removedCount = response.headers["x-verification-removed"];
+        if (updatedCount || removedCount) {
+          verificationResult = {
+            updated: parseInt(updatedCount) || 0,
+            removed: parseInt(removedCount) || 0,
+          };
+        }
+      } else if (response.data.groups) {
+        // New format - object with groups property
+        groupsData = response.data.groups;
+        verificationResult = response.data.verification_result;
+      } else {
+        // Fallback
+        groupsData = response.data;
+      }
+
+      setGroups(groupsData);
+
+      if (verificationResult) {
+        setVerificationResults(verificationResult);
+      }
+
+      // Initialize admin statuses - all fetched groups are considered verified
+      const statusMap = new Map();
+      groupsData.forEach((group) => {
+        const groupId = group.id || group._id;
+        statusMap.set(groupId, { verified: true, isAdmin: true });
+      });
+      setAdminStatuses(statusMap);
     } catch (error) {
       console.error("Failed to fetch groups:", error);
+      // Show user-friendly error if admin access was revoked
+      if (error.response?.status === 403) {
+        alert(
+          "Some groups have been removed because you're no longer an admin in them."
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -61,10 +104,27 @@ const Groups = () => {
   const syncGroups = async () => {
     setSyncing(true);
     try {
-      await axios.post(`${process.env.REACT_APP_API_URL}/api/groups/sync`);
+      const response = await axios.post(
+        `${process.env.REACT_APP_API_URL}/api/groups/sync`
+      );
+
+      // Handle enhanced sync response
+      if (response.data.verification_result) {
+        setVerificationResults(response.data.verification_result);
+
+        if (response.data.verification_result.removed > 0) {
+          alert(
+            `Sync completed! ${response.data.verification_result.removed} group(s) were removed because you're no longer an admin.`
+          );
+        } else {
+          alert(t("groups_synced_successfully"));
+        }
+      } else {
+        alert(t("groups_synced_successfully"));
+      }
+
       await fetchGroups();
       await fetchUsageStats();
-      alert(t("groups_synced_successfully"));
     } catch (error) {
       console.error("Failed to sync groups:", error);
       if (error.response?.status === 403) {
@@ -97,13 +157,17 @@ const Groups = () => {
       await fetchUsageStats();
     } catch (error) {
       console.error("Failed to add group:", error);
+      let errorMessage = t("failed_to_add_group");
+
       if (error.response?.status === 403) {
-        alert(error.response.data.message);
+        errorMessage = error.response.data.message;
       } else if (error.response?.status === 404) {
-        alert(t("group_not_found_check_bot"));
-      } else {
-        alert(t("failed_to_add_group"));
+        errorMessage = t("group_not_found_check_bot");
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
       }
+
+      alert(errorMessage);
     } finally {
       setAdding(false);
     }
@@ -125,13 +189,21 @@ const Groups = () => {
         `${process.env.REACT_APP_API_URL}/api/groups/${groupId}/check-admin`
       );
 
-      console.log("Admin check response:", response.data);
+      console.log("Enhanced admin check response:", response.data);
+
+      // Update admin status in local state
+      setAdminStatuses((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(groupId, {
+          verified: true,
+          isAdmin: response.data.is_admin,
+          lastChecked: new Date(),
+        });
+        return newMap;
+      });
 
       if (response.data.is_admin) {
-        // Mark this group as verified
-        setVerifiedGroups((prev) => new Set([...prev, groupId]));
-
-        if (response.data.already_added) {
+        if (response.data.verified) {
           alert(t("admin_status_verified_and_updated"));
         } else if (response.data.newly_added) {
           alert(t("group_added_successfully"));
@@ -139,22 +211,37 @@ const Groups = () => {
           alert(t("admin_status_verified"));
         }
 
-        // Refresh the groups list
+        // Refresh the groups list if status changed
         await fetchGroups();
         await fetchUsageStats();
       } else {
-        alert(t("not_admin_in_group"));
+        // User is no longer admin - remove from local state
+        setGroups((prevGroups) =>
+          prevGroups.filter((g) => (g.id || g._id) !== groupId)
+        );
+        alert(
+          t("not_admin_in_group") +
+            " The group has been removed from your list."
+        );
+        await fetchUsageStats(); // Update usage stats
       }
     } catch (error) {
       console.error("Failed to check admin status:", error);
 
+      let errorMessage = t("failed_to_check_admin_status");
+
       if (error.response?.status === 403) {
-        alert(error.response.data.message);
+        errorMessage = error.response.data.message;
+        // If it's an authorization error, the user is no longer admin
+        setGroups((prevGroups) =>
+          prevGroups.filter((g) => (g.id || g._id) !== groupId)
+        );
+        await fetchUsageStats();
       } else if (error.response?.status === 404) {
-        alert(t("group_not_found"));
-      } else {
-        alert(t("failed_to_check_admin_status"));
+        errorMessage = t("group_not_found");
       }
+
+      alert(errorMessage);
     } finally {
       setVerifyingGroupId(null);
     }
@@ -178,14 +265,16 @@ const Groups = () => {
         `${process.env.REACT_APP_API_URL}/api/groups/${groupId}`
       );
 
-      // Remove from verified groups
-      setVerifiedGroups((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(groupId);
-        return newSet;
+      // Remove from local state
+      setGroups((prevGroups) =>
+        prevGroups.filter((g) => (g.id || g._id) !== groupId)
+      );
+      setAdminStatuses((prev) => {
+        const newMap = new Map(prev);
+        newMap.delete(groupId);
+        return newMap;
       });
 
-      await fetchGroups();
       await fetchUsageStats();
       alert(t("group_removed_successfully"));
     } catch (error) {
@@ -194,9 +283,9 @@ const Groups = () => {
     }
   };
 
-  const isGroupVerified = (group) => {
+  const getAdminStatus = (group) => {
     const groupId = group.id || group._id;
-    return verifiedGroups.has(groupId);
+    return adminStatuses.get(groupId) || { verified: false, isAdmin: false };
   };
 
   const isVerifying = (group) => {
@@ -215,6 +304,57 @@ const Groups = () => {
   return (
     <div className="space-y-6">
       {usage && plan && <UsageAlert usage={usage} plan={plan} />}
+
+      {/* Show verification results if available */}
+      {verificationResults &&
+        (verificationResults.updated > 0 ||
+          verificationResults.removed > 0) && (
+          <div
+            className={`rounded-md p-4 ${
+              verificationResults.removed > 0
+                ? "bg-yellow-50 border border-yellow-200"
+                : "bg-green-50 border border-green-200"
+            }`}
+          >
+            <div className="flex">
+              <div className="flex-shrink-0">
+                {verificationResults.removed > 0 ? (
+                  <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" />
+                ) : (
+                  <CheckIcon className="h-5 w-5 text-green-400" />
+                )}
+              </div>
+              <div className="ml-3">
+                <h3
+                  className={`text-sm font-medium ${
+                    verificationResults.removed > 0
+                      ? "text-yellow-800"
+                      : "text-green-800"
+                  }`}
+                >
+                  Admin Status Verification Results
+                </h3>
+                <div
+                  className={`mt-2 text-sm ${
+                    verificationResults.removed > 0
+                      ? "text-yellow-700"
+                      : "text-green-700"
+                  }`}
+                >
+                  {verificationResults.updated > 0 && (
+                    <p>✓ {verificationResults.updated} group(s) verified</p>
+                  )}
+                  {verificationResults.removed > 0 && (
+                    <p>
+                      ⚠️ {verificationResults.removed} group(s) removed (no
+                      longer admin)
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
       <div className="flex justify-between items-center">
         <div>
@@ -239,7 +379,7 @@ const Groups = () => {
             <RefreshIcon
               className={`-ml-1 mr-2 h-5 w-5 ${syncing ? "animate-spin" : ""}`}
             />
-            {t("sync_groups")}
+            {syncing ? "Syncing..." : t("sync_groups")}
           </button>
 
           <button
@@ -298,77 +438,95 @@ const Groups = () => {
             <p className="mt-1 text-sm text-gray-500">
               {t("add_bot_to_groups")}
             </p>
+            {verificationResults && verificationResults.removed > 0 && (
+              <p className="mt-2 text-sm text-yellow-600">
+                {verificationResults.removed} group(s) were removed because
+                you're no longer an admin.
+              </p>
+            )}
           </div>
         ) : (
           <ul className="divide-y divide-gray-200">
-            {groups.map((group) => (
-              <li key={group._id}>
-                <div className="px-4 py-4 sm:px-6 flex items-center justify-between">
-                  <div className="flex items-center">
-                    {group.photo_url ? (
-                      <img
-                        className="h-12 w-12 rounded-full"
-                        src={group.photo_url}
-                        alt={group.title}
-                      />
-                    ) : (
-                      <div className="h-12 w-12 rounded-full bg-gray-300 flex items-center justify-center">
-                        <UserGroupIcon className="h-6 w-6 text-gray-600" />
-                      </div>
-                    )}
-                    <div className="ml-4">
-                      <div className="text-sm font-medium text-gray-900">
-                        {group.title}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {group.member_count} {t("members")} • {group.type}
-                      </div>
-                      {isGroupVerified(group) && (
-                        <div className="flex items-center text-xs text-green-600 mt-1">
-                          <CheckIcon className="h-3 w-3 mr-1" />
-                          {t("admin_verified")}
+            {groups.map((group) => {
+              const adminStatus = getAdminStatus(group);
+              const isCurrentlyVerifying = isVerifying(group);
+
+              return (
+                <li key={group._id}>
+                  <div className="px-4 py-4 sm:px-6 flex items-center justify-between">
+                    <div className="flex items-center">
+                      {group.photo_url ? (
+                        <img
+                          className="h-12 w-12 rounded-full"
+                          src={group.photo_url}
+                          alt={group.title}
+                        />
+                      ) : (
+                        <div className="h-12 w-12 rounded-full bg-gray-300 flex items-center justify-center">
+                          <UserGroupIcon className="h-6 w-6 text-gray-600" />
                         </div>
                       )}
+                      <div className="ml-4">
+                        <div className="text-sm font-medium text-gray-900">
+                          {group.title}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          {group.member_count} {t("members")} • {group.type}
+                        </div>
+                        <div className="flex items-center mt-1">
+                          {adminStatus.verified && adminStatus.isAdmin ? (
+                            <div className="flex items-center text-xs text-green-600">
+                              <CheckIcon className="h-3 w-3 mr-1" />
+                              {t("admin_verified")}
+                            </div>
+                          ) : (
+                            <div className="flex items-center text-xs text-yellow-600">
+                              <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
+                              Needs verification
+                            </div>
+                          )}
+                          {adminStatus.lastChecked && (
+                            <span className="ml-2 text-xs text-gray-400">
+                              Last checked:{" "}
+                              {adminStatus.lastChecked.toLocaleTimeString()}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    {isGroupVerified(group) ? (
+                    <div className="flex items-center space-x-2">
                       <button
                         onClick={() => checkAdminStatus(group)}
-                        disabled={isVerifying(group)}
-                        className="inline-flex items-center px-3 py-1.5 border border-green-300 text-xs font-medium rounded-md text-green-700 bg-green-50 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
+                        disabled={isCurrentlyVerifying}
+                        className={`inline-flex items-center px-3 py-1.5 border text-xs font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 ${
+                          adminStatus.verified && adminStatus.isAdmin
+                            ? "border-green-300 text-green-700 bg-green-50 hover:bg-green-100 focus:ring-green-500"
+                            : "border-yellow-300 text-yellow-700 bg-yellow-50 hover:bg-yellow-100 focus:ring-yellow-500"
+                        }`}
                       >
-                        {isVerifying(group) ? (
+                        {isCurrentlyVerifying && (
                           <RefreshIcon className="h-3 w-3 animate-spin mr-1" />
-                        ) : (
+                        )}
+                        {!isCurrentlyVerifying && (
                           <CheckIcon className="h-3 w-3 mr-1" />
                         )}
-                        {isVerifying(group) ? t("verifying") : t("re_verify")}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => checkAdminStatus(group)}
-                        disabled={isVerifying(group)}
-                        className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                      >
-                        {isVerifying(group) && (
-                          <RefreshIcon className="h-3 w-3 animate-spin mr-1" />
-                        )}
-                        {isVerifying(group)
+                        {isCurrentlyVerifying
                           ? t("verifying")
+                          : adminStatus.verified && adminStatus.isAdmin
+                          ? t("re_verify")
                           : t("verify_admin")}
                       </button>
-                    )}
-                    <button
-                      onClick={() => removeGroup(group)}
-                      className="inline-flex items-center px-3 py-1.5 border border-red-300 text-xs font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                    >
-                      <TrashIcon className="h-4 w-4" />
-                    </button>
+                      <button
+                        onClick={() => removeGroup(group)}
+                        className="inline-flex items-center px-3 py-1.5 border border-red-300 text-xs font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -377,10 +535,17 @@ const Groups = () => {
         <h3 className="text-sm font-medium text-blue-800">
           {t("how_to_add_groups")}
         </h3>
-        <ul className="mt-2 text-sm text-blue-700 list-disc list-inside">
+        <ul className="mt-2 text-sm text-blue-700 list-disc list-inside space-y-1">
           <li>{t("add_bot_as_admin")}</li>
           <li>{t("click_sync_groups")}</li>
           <li>{t("verify_admin_status")}</li>
+          <li className="font-medium">
+            🔄 Admin status is automatically verified when you log in and
+            periodically checked
+          </li>
+          <li className="font-medium">
+            ⚠️ Groups will be automatically removed if you lose admin access
+          </li>
         </ul>
       </div>
     </div>

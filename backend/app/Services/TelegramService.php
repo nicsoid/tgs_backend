@@ -5,8 +5,10 @@ namespace App\Services;
 
 use GuzzleHttp\Client;
 use App\Models\Group;
+use App\Models\User;
 use App\Models\ScheduledPost;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class TelegramService
 {
@@ -101,6 +103,9 @@ class TelegramService
         }
     }
 
+    /**
+     * Enhanced admin status checking with better error handling
+     */
     public function checkUserIsAdmin($chatId, $userId)
     {
         try {
@@ -112,9 +117,27 @@ class TelegramService
             ]);
 
             $data = json_decode($response->getBody(), true);
+            
+            if (!$data['ok']) {
+                Log::warning('Telegram API returned error for admin check', [
+                    'chat_id' => $chatId,
+                    'user_id' => $userId,
+                    'error' => $data['description'] ?? 'Unknown error'
+                ]);
+                return false;
+            }
+            
             $status = $data['result']['status'];
+            $isAdmin = in_array($status, ['creator', 'administrator']);
+            
+            Log::info('Admin status checked', [
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'status' => $status,
+                'is_admin' => $isAdmin
+            ]);
 
-            return in_array($status, ['creator', 'administrator']);
+            return $isAdmin;
         } catch (\Exception $e) {
             Log::error('Failed to check admin status', [
                 'chat_id' => $chatId,
@@ -123,6 +146,155 @@ class TelegramService
             ]);
             return false;
         }
+    }
+
+    /**
+     * Verify admin status for all user's groups
+     */
+    public function verifyUserAdminStatusForAllGroups(User $user)
+    {
+        Log::info('Starting admin verification for all user groups', ['user_id' => $user->id]);
+        
+        $userGroups = DB::connection('mongodb')
+            ->table('user_groups')
+            ->where('user_id', $user->id)
+            ->get();
+
+        $updatedCount = 0;
+        $removedCount = 0;
+
+        foreach ($userGroups as $userGroup) {
+            try {
+                $group = Group::find($userGroup->group_id);
+                if (!$group) {
+                    Log::warning('Group not found during verification', [
+                        'group_id' => $userGroup->group_id,
+                        'user_id' => $user->id
+                    ]);
+                    continue;
+                }
+
+                $isAdmin = $this->checkUserIsAdmin($group->telegram_id, $user->telegram_id);
+                
+                if ($isAdmin !== (bool)$userGroup->is_admin) {
+                    // Admin status changed
+                    if ($isAdmin) {
+                        // User is now admin
+                        DB::connection('mongodb')->table('user_groups')
+                            ->where('user_id', $user->id)
+                            ->where('group_id', $group->id)
+                            ->update([
+                                'is_admin' => true,
+                                'last_verified' => now(),
+                                'updated_at' => now()
+                            ]);
+                        $updatedCount++;
+                        
+                        Log::info('User admin status restored', [
+                            'user_id' => $user->id,
+                            'group_id' => $group->id,
+                            'group_title' => $group->title
+                        ]);
+                    } else {
+                        // User is no longer admin - remove relationship
+                        DB::connection('mongodb')->table('user_groups')
+                            ->where('user_id', $user->id)
+                            ->where('group_id', $group->id)
+                            ->delete();
+                        
+                        // Decrement user's group count
+                        $user->decrementGroupCount();
+                        $removedCount++;
+                        
+                        Log::info('User admin status revoked - relationship removed', [
+                            'user_id' => $user->id,
+                            'group_id' => $group->id,
+                            'group_title' => $group->title
+                        ]);
+                    }
+                } else {
+                    // Status unchanged, just update verification time
+                    DB::connection('mongodb')->table('user_groups')
+                        ->where('user_id', $user->id)
+                        ->where('group_id', $group->id)
+                        ->update([
+                            'last_verified' => now(),
+                            'updated_at' => now()
+                        ]);
+                }
+            } catch (\Exception $e) {
+                Log::error('Error during admin verification', [
+                    'user_id' => $user->id,
+                    'group_id' => $userGroup->group_id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        Log::info('Admin verification completed', [
+            'user_id' => $user->id,
+            'updated_count' => $updatedCount,
+            'removed_count' => $removedCount
+        ]);
+
+        return [
+            'updated' => $updatedCount,
+            'removed' => $removedCount
+        ];
+    }
+
+    /**
+     * Check if user is admin for a specific group (with database update)
+     */
+    public function verifyAndUpdateAdminStatus(User $user, Group $group)
+    {
+        $isAdmin = $this->checkUserIsAdmin($group->telegram_id, $user->telegram_id);
+        
+        $userGroup = DB::connection('mongodb')
+            ->table('user_groups')
+            ->where('user_id', $user->id)
+            ->where('group_id', $group->id)
+            ->first();
+
+        if ($userGroup) {
+            if ($isAdmin) {
+                // Update admin status to true and verification time
+                DB::connection('mongodb')->table('user_groups')
+                    ->where('user_id', $user->id)
+                    ->where('group_id', $group->id)
+                    ->update([
+                        'is_admin' => true,
+                        'last_verified' => now(),
+                        'updated_at' => now()
+                    ]);
+            } else {
+                // User is no longer admin - remove relationship
+                DB::connection('mongodb')->table('user_groups')
+                    ->where('user_id', $user->id)
+                    ->where('group_id', $group->id)
+                    ->delete();
+                
+                $user->decrementGroupCount();
+            }
+        } else if ($isAdmin) {
+            // User is admin but relationship doesn't exist - create it
+            if ($user->canAddGroup()) {
+                DB::connection('mongodb')->table('user_groups')->insert([
+                    'user_id' => $user->id,
+                    'group_id' => $group->id,
+                    'is_admin' => true,
+                    'permissions' => ['can_post_messages', 'can_edit_messages'],
+                    'added_at' => now(),
+                    'last_verified' => now(),
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+                
+                $user->incrementGroupCount();
+            }
+        }
+
+        return $isAdmin;
     }
 
     public function getUpdates($offset = null)
@@ -271,15 +443,34 @@ class TelegramService
     public function getChatMemberCount($chatId)
     {
         try {
+            \Log::info('Fetching chat member count', ['chat_id' => $chatId]);
+            
             $response = $this->client->get($this->apiUrl . '/getChatMemberCount', [
                 'query' => ['chat_id' => $chatId]
             ]);
 
-            return json_decode($response->getBody(), true)['result'];
+            $data = json_decode($response->getBody(), true);
+            
+            if ($data['ok']) {
+                $memberCount = $data['result'];
+                \Log::info('Successfully fetched member count', [
+                    'chat_id' => $chatId,
+                    'member_count' => $memberCount
+                ]);
+                return $memberCount;
+            } else {
+                \Log::error('Telegram API error when fetching member count', [
+                    'chat_id' => $chatId,
+                    'error_code' => $data['error_code'] ?? 'unknown',
+                    'description' => $data['description'] ?? 'unknown'
+                ]);
+                return 0;
+            }
         } catch (\Exception $e) {
             Log::error('Failed to get chat member count', [
                 'chat_id' => $chatId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             return 0;
         }

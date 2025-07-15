@@ -1,5 +1,5 @@
 <?php
-// routes/api.php - Add this route for handling media updates
+// routes/api.php - Enhanced with admin verification
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Http\Request;
@@ -37,15 +37,24 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/groups', [GroupController::class, 'index']);
     Route::post('/groups/sync', [GroupController::class, 'sync']);
     Route::post('/groups/{id}/check-admin', [GroupController::class, 'checkAdminStatus']);
+    Route::post('/groups/{id}/refresh', [GroupController::class, 'refreshGroupInfo']);
     Route::delete('/groups/{id}', [GroupController::class, 'removeGroup']);
     Route::post('/groups/add-manually', [GroupController::class, 'addGroupManually']);
     
-    // Post routes
+    // Post routes - with admin verification middleware for create/update operations
     Route::get('/scheduled-posts/usage/stats', [ScheduledPostController::class, 'getUsageStats']);
-    Route::apiResource('scheduled-posts', ScheduledPostController::class);
+    Route::get('/scheduled-posts', [ScheduledPostController::class, 'index']);
+    Route::get('/scheduled-posts/{id}', [ScheduledPostController::class, 'show']);
     
-    // Special route for updating posts with media (supports multipart/form-data)
-    Route::post('/scheduled-posts/{id}/update-with-media', [ScheduledPostController::class, 'update']);
+    // Routes that require admin verification
+    Route::middleware('verify.group.admin')->group(function () {
+        Route::post('/scheduled-posts', [ScheduledPostController::class, 'store']);
+        Route::put('/scheduled-posts/{id}', [ScheduledPostController::class, 'update']);
+        Route::post('/scheduled-posts/{id}/update-with-media', [ScheduledPostController::class, 'update']);
+    });
+    
+    // Delete doesn't need admin verification since it's user's own post
+    Route::delete('/scheduled-posts/{id}', [ScheduledPostController::class, 'destroy']);
     
     // Subscription routes
     Route::prefix('subscription')->group(function () {
@@ -123,6 +132,7 @@ Route::get('/debug/user-groups', function(Request $request) {
         'user_id' => $user->id,
         'usage_groups_count' => $usage['groups_count'] ?? 0,
         'actual_relationships_count' => count($userGroupRelations),
+        'admin_relationships_count' => $userGroupRelations->where('is_admin', true)->count(),
         'relationships' => $userGroupRelations,
         'groups_with_direct_user_id_count' => $groupsWithDirectUserId->count(),
         'groups_with_direct_user_id' => $groupsWithDirectUserId->toArray(),
@@ -157,6 +167,23 @@ if (app()->environment('local')) {
             ],
             'app_url' => config('app.url'),
             'storage_url' => Storage::url(''),
+        ]);
+    });
+    
+    // Admin verification test route
+    Route::post('/debug/verify-admin/{userId}', function($userId) {
+        $user = \App\Models\User::find($userId);
+        if (!$user) {
+            return response()->json(['error' => 'User not found'], 404);
+        }
+        
+        $telegramService = app(\App\Services\TelegramService::class);
+        $result = $telegramService->verifyUserAdminStatusForAllGroups($user);
+        
+        return response()->json([
+            'user_id' => $user->id,
+            'verification_result' => $result,
+            'message' => 'Admin verification completed'
         ]);
     });
 }

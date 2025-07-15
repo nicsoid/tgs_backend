@@ -20,119 +20,55 @@ class GroupController extends Controller
     {
         $user = $request->user();
         
-        \Log::info('=== DEBUGGING GROUP FETCH ===', [
+        \Log::info('=== FETCHING USER GROUPS ===', [
             'user_id' => $user->id,
             'user_id_type' => gettype($user->id)
         ]);
         
         try {
-            // Step 1: Check user_groups relationships
+            // Only verify admin status if explicitly requested or if it's been a while
+            $shouldVerify = $request->get('verify_admin', false) || $this->shouldAutoVerify($user);
+            
+            $verificationResult = ['updated' => 0, 'removed' => 0];
+            
+            if ($shouldVerify) {
+                $verificationResult = $this->telegramService->verifyUserAdminStatusForAllGroups($user);
+                
+                \Log::info('Admin verification during group fetch', [
+                    'user_id' => $user->id,
+                    'verification_result' => $verificationResult
+                ]);
+            }
+
+            // Now get the updated relationships
             $userGroupRelations = \DB::connection('mongodb')
                 ->table('user_groups')
                 ->where('user_id', $user->id)
+                ->where('is_admin', true)  // Only get admin relationships
                 ->get();
             
-            \Log::info('Step 1 - User group relations', [
+            \Log::info('User group relations after verification', [
                 'query_user_id' => $user->id,
-                'relations_found' => $userGroupRelations->count(),
-                'raw_relations' => $userGroupRelations->toArray()
+                'admin_relations_found' => $userGroupRelations->count(),
+                'verification_triggered' => $shouldVerify
             ]);
             
             if ($userGroupRelations->isEmpty()) {
-                \Log::error('No relationships found for user!');
-                return response()->json([]);
-            }
-            
-            // Step 2: Extract group IDs
-            $groupIds = $userGroupRelations->pluck('group_id')->toArray();
-            
-            \Log::info('Step 2 - Group IDs extracted', [
-                'group_ids' => $groupIds,
-                'group_ids_types' => array_map('gettype', $groupIds)
-            ]);
-            
-            // Step 3: Try different approaches to find groups
-            
-            // Approach A: Direct _id lookup
-            $groupsA = \App\Models\Group::whereIn('_id', $groupIds)->get();
-            \Log::info('Approach A - Direct _id lookup', [
-                'count' => $groupsA->count(),
-                'groups' => $groupsA->map(function($group) {
-                    return [
-                        '_id' => $group->_id,
-                        'id' => $group->id ?? 'not set',
-                        'title' => $group->title
-                    ];
-                })
-            ]);
-            
-            // Approach B: Try with string conversion
-            $stringGroupIds = array_map('strval', $groupIds);
-            $groupsB = \App\Models\Group::whereIn('_id', $stringGroupIds)->get();
-            \Log::info('Approach B - String converted IDs', [
-                'string_ids' => $stringGroupIds,
-                'count' => $groupsB->count()
-            ]);
-            
-            // Approach C: Try individual lookups
-            $groupsC = collect();
-            foreach ($groupIds as $groupId) {
-                $group = \App\Models\Group::where('_id', $groupId)->first();
-                if ($group) {
-                    $groupsC->push($group);
-                }
-                \Log::info('Approach C - Individual lookup', [
-                    'looking_for' => $groupId,
-                    'found' => $group ? 'yes' : 'no',
-                    'group_title' => $group->title ?? 'not found'
+                \Log::info('No admin relationships found for user');
+                return response()->json([], 200, [
+                    'X-Verification-Updated' => $verificationResult['updated'],
+                    'X-Verification-Removed' => $verificationResult['removed']
                 ]);
             }
             
-            // Approach D: Check all groups and compare IDs
-            $allGroups = \App\Models\Group::all();
-            \Log::info('Approach D - All groups in database', [
-                'total_groups' => $allGroups->count(),
-                'all_group_ids' => $allGroups->pluck('_id')->toArray(),
-                'looking_for_ids' => $groupIds
-            ]);
+            // Extract group IDs
+            $groupIds = $userGroupRelations->pluck('group_id')->toArray();
             
-            // Find which approach worked
-            if ($groupsA->isNotEmpty()) {
-                $finalGroups = $groupsA;
-                \Log::info('Using Approach A results');
-            } elseif ($groupsB->isNotEmpty()) {
-                $finalGroups = $groupsB;
-                \Log::info('Using Approach B results');
-            } elseif ($groupsC->isNotEmpty()) {
-                $finalGroups = $groupsC;
-                \Log::info('Using Approach C results');
-            } else {
-                \Log::error('NO APPROACH WORKED!');
-                
-                // Manual comparison
-                foreach ($allGroups as $group) {
-                    foreach ($groupIds as $targetId) {
-                        $match = false;
-                        if ($group->_id == $targetId) $match = 'exact_match';
-                        elseif ((string)$group->_id === (string)$targetId) $match = 'string_match';
-                        elseif ($group->id == $targetId) $match = 'id_match';
-                        
-                        if ($match) {
-                            \Log::info('MANUAL MATCH FOUND', [
-                                'group_id' => $group->_id,
-                                'target_id' => $targetId,
-                                'match_type' => $match,
-                                'group_title' => $group->title
-                            ]);
-                        }
-                    }
-                }
-                
-                return response()->json([]);
-            }
+            // Get groups
+            $groups = \App\Models\Group::whereIn('_id', $groupIds)->get();
             
             // Ensure proper ID format
-            $finalGroups = $finalGroups->map(function($group) {
+            $groups = $groups->map(function($group) {
                 if (!isset($group->id)) {
                     $group->id = (string)$group->_id;
                 }
@@ -140,17 +76,16 @@ class GroupController extends Controller
             });
             
             \Log::info('=== FINAL RESULT ===', [
-                'groups_count' => $finalGroups->count(),
-                'groups' => $finalGroups->map(function($group) {
-                    return [
-                        'id' => $group->id,
-                        '_id' => $group->_id,
-                        'title' => $group->title
-                    ];
-                })
+                'groups_count' => $groups->count(),
+                'verification_result' => $verificationResult
             ]);
             
-            return response()->json($finalGroups);
+            // For backward compatibility, return just the groups array
+            // but include verification result in headers for frontend to optionally use
+            return response()->json($groups, 200, [
+                'X-Verification-Updated' => $verificationResult['updated'],
+                'X-Verification-Removed' => $verificationResult['removed']
+            ]);
             
         } catch (\Exception $e) {
             \Log::error('Exception in group fetch', [
@@ -163,6 +98,28 @@ class GroupController extends Controller
                 'message' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Check if automatic verification should be triggered
+     */
+    private function shouldAutoVerify($user)
+    {
+        // Get the last verification time for any of user's groups
+        $lastVerification = \DB::connection('mongodb')
+            ->table('user_groups')
+            ->where('user_id', $user->id)
+            ->where('last_verified', '!=', null)
+            ->orderBy('last_verified', 'desc')
+            ->first();
+
+        if (!$lastVerification) {
+            return true; // Never verified
+        }
+
+        // Auto-verify if last verification was more than 1 hour ago
+        $lastVerifiedTime = \Carbon\Carbon::parse($lastVerification->last_verified);
+        return $lastVerifiedTime->diffInHours(now()) > 1;
     }
 
     public function addGroup(Request $request)
@@ -212,9 +169,28 @@ class GroupController extends Controller
                 ], 403);
             }
             
-            // Create or update group
-            $memberCount = $this->telegramService->getChatMemberCount($chatInfo['id']);
+            // Get member count safely with better error handling
+            $memberCount = 0;
+            try {
+                $memberCount = $this->telegramService->getChatMemberCount($chatInfo['id']);
+                \Log::info('Successfully got member count', [
+                    'chat_id' => $chatInfo['id'],
+                    'member_count' => $memberCount
+                ]);
+            } catch (\Exception $e) {
+                \Log::warning('Could not get member count', [
+                    'chat_id' => $chatInfo['id'],
+                    'error' => $e->getMessage()
+                ]);
+                // Try to get approximate member count from chat info if available
+                if (isset($chatInfo['approximate_member_count'])) {
+                    $memberCount = $chatInfo['approximate_member_count'];
+                } elseif (isset($chatInfo['member_count'])) {
+                    $memberCount = $chatInfo['member_count'];
+                }
+            }
             
+            // Create or update group
             $group = Group::updateOrCreate(
                 ['telegram_id' => (string)$chatInfo['id']],
                 [
@@ -222,34 +198,45 @@ class GroupController extends Controller
                     'username' => $chatInfo['username'] ?? null,
                     'type' => $chatInfo['type'],
                     'photo_url' => null,
-                    'member_count' => $memberCount
+                    'member_count' => $memberCount,
+                    'updated_at' => now() // Force update timestamp
                 ]
             );
             
             // Check if already connected
-            $existingRelation = $user->groups()->where('group_id', $group->id)->exists();
+            $existingRelation = \DB::connection('mongodb')
+                ->table('user_groups')
+                ->where('user_id', $user->id)
+                ->where('group_id', $group->id)
+                ->first();
             
             if ($existingRelation) {
+                // Update verification status
+                \DB::connection('mongodb')->table('user_groups')
+                    ->where('user_id', $user->id)
+                    ->where('group_id', $group->id)
+                    ->update([
+                        'is_admin' => true,
+                        'last_verified' => now(),
+                        'updated_at' => now()
+                    ]);
+                
                 return response()->json([
-                    'message' => 'Group already added',
+                    'message' => 'Group already added and admin status verified',
                     'group' => $group
                 ]);
             }
             
             // Add relationship
-            // $user->groups()->attach($group->id, [
-            //     'is_admin' => true,
-            //     'permissions' => ['can_post_messages', 'can_edit_messages'],
-            //     'added_at' => now(),
-            //     'last_verified' => now()
-            // ]);
-            $user->groups()->syncWithoutDetaching([
-                $group->id => [
-                    'is_admin' => true,
-                    'permissions' => ['can_post_messages', 'can_edit_messages'],
-                    'added_at' => now(),
-                    'last_verified' => now()
-                ]
+            \DB::connection('mongodb')->table('user_groups')->insert([
+                'user_id' => $user->id,
+                'group_id' => $group->id,
+                'is_admin' => true,
+                'permissions' => ['can_post_messages', 'can_edit_messages'],
+                'added_at' => now(),
+                'last_verified' => now(),
+                'created_at' => now(),
+                'updated_at' => now()
             ]);
             
             $user->incrementGroupCount();
@@ -273,28 +260,6 @@ class GroupController extends Controller
         }
     }
 
-    private function addGroupToUser($user, $group)
-    {
-        // Don't store user_id in the group document!
-        // Instead, create proper relationship
-        
-        \DB::connection('mongodb')->table('user_groups')->updateOrInsert([
-            'user_id' => $user->id,
-            'group_id' => $group->id
-        ], [
-            'user_id' => $user->id,
-            'group_id' => $group->id,
-            'is_admin' => true,
-            'permissions' => ['can_post_messages', 'can_edit_messages'],
-            'added_at' => now(),
-            'last_verified' => now(),
-            'created_at' => now(),
-            'updated_at' => now()
-        ]);
-        
-        $user->incrementGroupCount();
-    }
-
     public function sync(Request $request)
     {
         $user = $request->user();
@@ -307,6 +272,9 @@ class GroupController extends Controller
         // Regular sync logic - discover groups the bot is in
         try {
             \Log::info('Starting group discovery for user', ['user_id' => $user->id]);
+            
+            // First verify existing admin statuses
+            $verificationResult = $this->telegramService->verifyUserAdminStatusForAllGroups($user);
             
             // Get chats the bot is in
             $botChats = $this->telegramService->getBotChats();
@@ -348,6 +316,23 @@ class GroupController extends Controller
                             break;
                         }
                         
+                        // Get member count safely
+                        $memberCount = 0;
+                        try {
+                            $memberCount = $this->telegramService->getChatMemberCount($chat['id']);
+                        } catch (\Exception $e) {
+                            \Log::warning('Could not get member count during sync', [
+                                'chat_id' => $chat['id'],
+                                'error' => $e->getMessage()
+                            ]);
+                            // Try to get from chat data if available
+                            if (isset($chat['approximate_member_count'])) {
+                                $memberCount = $chat['approximate_member_count'];
+                            } elseif (isset($chat['member_count'])) {
+                                $memberCount = $chat['member_count'];
+                            }
+                        }
+                        
                         // Create or update group
                         $group = Group::updateOrCreate(
                             ['telegram_id' => (string)$chat['id']],
@@ -356,7 +341,8 @@ class GroupController extends Controller
                                 'username' => $chat['username'] ?? null,
                                 'type' => $chat['type'],
                                 'photo_url' => null,
-                                'member_count' => 0
+                                'member_count' => $memberCount,
+                                'updated_at' => now()
                             ]
                         );
                         
@@ -388,11 +374,15 @@ class GroupController extends Controller
                                 'group_title' => $group->title
                             ]);
                         } else {
-                            // Update verification time
+                            // Update verification time and ensure admin status is true
                             \DB::connection('mongodb')->table('user_groups')
                                 ->where('user_id', $user->id)
                                 ->where('group_id', $group->id)
-                                ->update(['last_verified' => now()]);
+                                ->update([
+                                    'is_admin' => true,
+                                    'last_verified' => now(),
+                                    'updated_at' => now()
+                                ]);
                         }
                         
                         $discoveredGroups[] = [
@@ -417,6 +407,7 @@ class GroupController extends Controller
                     : "No new groups found. Make sure the bot is added as admin to your groups.",
                 'discovered_groups' => $discoveredGroups,
                 'added_count' => $addedGroups,
+                'verification_result' => $verificationResult,
                 'total_chats_checked' => count($botChats),
                 'instructions' => [
                     'Add bot (@' . config('services.telegram.bot_username') . ') as admin to your Telegram groups',
@@ -442,7 +433,6 @@ class GroupController extends Controller
             ], 500);
         }
     }
-
 
     public function checkAdminStatus(Request $request, $groupId)
     {
@@ -473,96 +463,53 @@ class GroupController extends Controller
                 'telegram_id' => $group->telegram_id
             ]);
             
-            // Check if user already has this group - FIXED COLLECTION ACCESS
-            $existingRelation = \DB::connection('mongodb')
-                ->table('user_groups')  // Use ->table() instead of ->collection()
-                ->where('user_id', $user->id)
-                ->where('group_id', $group->id)
-                ->first();
+            // Use the enhanced verification method
+            $isAdmin = $this->telegramService->verifyAndUpdateAdminStatus($user, $group);
             
-            \Log::info('Existing relationship check', [
-                'exists' => $existingRelation ? 'yes' : 'no',
-                'relationship_data' => $existingRelation
-            ]);
-            
-            // Check admin status with Telegram
-            $isAdmin = $this->telegramService->checkUserIsAdmin(
-                $group->telegram_id,
-                $user->telegram_id
-            );
-            
-            \Log::info('Telegram admin check result', [
+            \Log::info('Enhanced admin verification result', [
+                'user_id' => $user->id,
+                'group_id' => $group->id,
                 'is_admin' => $isAdmin
             ]);
 
-            if ($isAdmin) {
-                if ($existingRelation) {
-                    // Group already exists - just update verification time
-                    \DB::connection('mongodb')->table('user_groups')
-                        ->where('user_id', $user->id)
-                        ->where('group_id', $group->id)
-                        ->update([
-                            'last_verified' => now(),
-                            'is_admin' => true,
-                            'updated_at' => now()
-                        ]);
-                    
-                    \Log::info('Updated existing group relationship verification');
-                    
-                    return response()->json([
-                        'is_admin' => true,
-                        'already_added' => true,
-                        'message' => 'Admin status verified and updated'
-                    ]);
-                } else {
-                    // New group - check if user can add more groups
-                    if (!$user->canAddGroup()) {
-                        $plan = $user->getSubscriptionPlan();
-                        
-                        \Log::info('Group limit reached', [
-                            'current_count' => $user->usage['groups_count'],
-                            'limit' => $plan->limits['groups']
-                        ]);
-                        
-                        return response()->json([
-                            'error' => 'Group limit reached',
-                            'message' => "Your {$plan->display_name} plan allows up to {$plan->limits['groups']} groups. Please upgrade to add more groups.",
-                            'is_admin' => true,
-                            'can_add' => false,
-                            'current_count' => $user->usage['groups_count'],
-                            'limit' => $plan->limits['groups']
-                        ], 403);
-                    }
+            // Check current relationship status after verification
+            $currentRelation = \DB::connection('mongodb')
+                ->table('user_groups')
+                ->where('user_id', $user->id)
+                ->where('group_id', $group->id)
+                ->first();
 
-                    // Add new group relationship
-                    \DB::connection('mongodb')->table('user_groups')->insert([
-                        'user_id' => $user->id,
-                        'group_id' => $group->id,
-                        'is_admin' => true,
-                        'permissions' => ['can_post_messages', 'can_edit_messages'],
-                        'added_at' => now(),
-                        'last_verified' => now(),
-                        'created_at' => now(),
-                        'updated_at' => now()
-                    ]);
-                    
-                    $user->incrementGroupCount();
-                    
-                    \Log::info('Added new group relationship');
-                    
+            if ($isAdmin && $currentRelation) {
+                return response()->json([
+                    'is_admin' => true,
+                    'verified' => true,
+                    'message' => 'Admin status verified and updated'
+                ]);
+            } else if ($isAdmin && !$currentRelation) {
+                // Admin but relationship was created (if user had space)
+                if ($user->canAddGroup()) {
                     return response()->json([
                         'is_admin' => true,
                         'newly_added' => true,
                         'message' => 'Group added successfully'
                     ]);
+                } else {
+                    $plan = $user->getSubscriptionPlan();
+                    return response()->json([
+                        'error' => 'Group limit reached',
+                        'message' => "Your {$plan->display_name} plan allows up to {$plan->limits['groups']} groups. Please upgrade to add more groups.",
+                        'is_admin' => true,
+                        'can_add' => false,
+                        'current_count' => $user->usage['groups_count'],
+                        'limit' => $plan->limits['groups']
+                    ], 403);
                 }
             } else {
-                // Not admin
-                \Log::info('User is not admin in this group');
-                
+                // Not admin - relationship was removed during verification
                 return response()->json([
                     'is_admin' => false,
-                    'message' => 'You are not an admin in this group'
+                    'verified' => true,
+                    'message' => 'You are not an admin in this group. Access has been revoked.'
                 ]);
             }
             
@@ -587,10 +534,101 @@ class GroupController extends Controller
         return $this->handleManualAdd($request, $user);
     }
 
+    public function refreshGroupInfo(Request $request, $groupId)
+    {
+        $user = $request->user();
+        
+        try {
+            // Find the group
+            $group = Group::where('_id', $groupId)
+                        ->orWhere('id', $groupId)
+                        ->first();
+            
+            if (!$group) {
+                return response()->json([
+                    'error' => 'Group not found'
+                ], 404);
+            }
+            
+            // Verify user has access to this group
+            $userGroup = \DB::connection('mongodb')
+                ->table('user_groups')
+                ->where('user_id', $user->id)
+                ->where('group_id', $group->id)
+                ->where('is_admin', true)
+                ->first();
+                
+            if (!$userGroup) {
+                return response()->json([
+                    'error' => 'Not authorized'
+                ], 403);
+            }
+            
+            // Get fresh chat info from Telegram
+            $chatInfo = $this->telegramService->getChatInfo($group->telegram_id);
+            
+            if (!$chatInfo) {
+                return response()->json([
+                    'error' => 'Could not fetch group information from Telegram'
+                ], 400);
+            }
+            
+            // Get member count
+            $memberCount = 0;
+            try {
+                $memberCount = $this->telegramService->getChatMemberCount($group->telegram_id);
+            } catch (\Exception $e) {
+                \Log::warning('Could not refresh member count', [
+                    'group_id' => $group->id,
+                    'error' => $e->getMessage()
+                ]);
+                // Use existing count as fallback
+                $memberCount = $group->member_count ?? 0;
+            }
+            
+            // Update group information
+            $group->update([
+                'title' => $chatInfo['title'],
+                'username' => $chatInfo['username'] ?? null,
+                'type' => $chatInfo['type'],
+                'member_count' => $memberCount,
+                'updated_at' => now()
+            ]);
+            
+            \Log::info('Group information refreshed', [
+                'group_id' => $group->id,
+                'title' => $group->title,
+                'member_count' => $memberCount
+            ]);
+            
+            return response()->json([
+                'message' => 'Group information refreshed successfully',
+                'group' => $group
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Failed to refresh group info', [
+                'group_id' => $groupId,
+                'user_id' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to refresh group information',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
     public function removeGroup(Request $request, $groupId)
     {
         $user = $request->user();
-        $user->groups()->detach($groupId);
+        
+        // Remove from user_groups relationship
+        \DB::connection('mongodb')->table('user_groups')
+            ->where('user_id', $user->id)
+            ->where('group_id', $groupId)
+            ->delete();
+            
         $user->decrementGroupCount();
 
         return response()->json(['message' => 'Group removed successfully']);
@@ -709,12 +747,25 @@ class GroupController extends Controller
                 ], 403);
             }
             
-            // Get member count safely
+            // Get member count safely with better error handling
+            $memberCount = 0;
             try {
                 $memberCount = $this->telegramService->getChatMemberCount($chatInfo['id']);
+                \Log::info('Successfully got member count for manual add', [
+                    'chat_id' => $chatInfo['id'],
+                    'member_count' => $memberCount
+                ]);
             } catch (\Exception $e) {
-                \Log::warning('Could not get member count', ['error' => $e->getMessage()]);
-                $memberCount = 0;
+                \Log::warning('Could not get member count for manual add', [
+                    'chat_id' => $chatInfo['id'],
+                    'error' => $e->getMessage()
+                ]);
+                // Try to get approximate member count from chat info if available
+                if (isset($chatInfo['approximate_member_count'])) {
+                    $memberCount = $chatInfo['approximate_member_count'];
+                } elseif (isset($chatInfo['member_count'])) {
+                    $memberCount = $chatInfo['member_count'];
+                }
             }
             
             // Create or update group
@@ -725,7 +776,8 @@ class GroupController extends Controller
                     'username' => isset($chatInfo['username']) ? $chatInfo['username'] : null,
                     'type' => $chatInfo['type'],
                     'photo_url' => null,
-                    'member_count' => $memberCount
+                    'member_count' => $memberCount,
+                    'updated_at' => now() // Force update timestamp
                 ]
             );
             
@@ -743,13 +795,23 @@ class GroupController extends Controller
                 ->first();
             
             if ($existingRelation) {
-                \Log::info('Group relationship already exists', [
+                // Update admin status and verification time
+                \DB::connection('mongodb')->table('user_groups')
+                    ->where('user_id', $user->id)
+                    ->where('group_id', $group->id)
+                    ->update([
+                        'is_admin' => true,
+                        'last_verified' => now(),
+                        'updated_at' => now()
+                    ]);
+                
+                \Log::info('Group relationship already exists, updated verification', [
                     'user_id' => $user->id,
                     'group_id' => $group->id
                 ]);
                 
                 return response()->json([
-                    'message' => 'Group already added to your account',
+                    'message' => 'Group already added to your account and admin status verified',
                     'group' => $group
                 ]);
             }
@@ -793,5 +855,4 @@ class GroupController extends Controller
             ], 500);
         }
     }
-
 }
