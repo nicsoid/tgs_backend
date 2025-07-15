@@ -1,4 +1,4 @@
-// src/components/Layout.js
+// src/components/Layout.js - Fixed version
 
 import React, { useState, useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -106,46 +106,43 @@ const Layout = () => {
 
       <nav className="bg-white shadow-sm relative z-50 nav-container">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16 min-w-0">
-            {/* Left side - Logo and Desktop Navigation */}
-            <div className="flex items-center min-w-0 flex-1">
-              <div className="flex-shrink-0 flex items-center mr-4 lg:mr-6">
-                <h1 className="text-lg font-bold text-gray-900 whitespace-nowrap">
-                  Telegram Scheduler
-                </h1>
-              </div>
+          <div className="flex justify-between items-center h-16">
+            {/* Left side - Logo */}
+            <div className="flex-shrink-0">
+              <h1 className="text-lg lg:text-xl font-bold text-gray-900">
+                <span className="hidden sm:inline">Telegram Scheduler</span>
+                <span className="sm:hidden">TS</span>
+              </h1>
+            </div>
 
-              {/* Desktop Navigation */}
-              <div className="hidden lg:flex lg:space-x-4 2xl:space-x-6 flex-1 justify-center max-w-2xl">
-                {navigation.map((item) => (
-                  <Link
-                    key={item.name}
-                    to={item.href}
-                    className={`${
-                      location.pathname === item.href
-                        ? "border-indigo-500 text-gray-900"
-                        : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700"
-                    } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors whitespace-nowrap`}
-                  >
-                    <item.icon className="w-4 h-4 mr-1 flex-shrink-0" />
-                    <span className="hidden 2xl:inline">{item.name}</span>
-                    <span className="2xl:hidden text-xs">
-                      {item.name.split(" ")[0]}
-                    </span>
-                  </Link>
-                ))}
-              </div>
+            {/* Center - Desktop Navigation */}
+            <div className="hidden lg:flex lg:items-center lg:space-x-1 xl:space-x-2">
+              {navigation.map((item) => (
+                <Link
+                  key={item.name}
+                  to={item.href}
+                  className={`${
+                    location.pathname === item.href
+                      ? "border-indigo-500 text-gray-900 bg-indigo-50"
+                      : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 hover:bg-gray-50"
+                  } inline-flex items-center px-2 xl:px-3 py-2 border-b-2 text-sm font-medium transition-colors whitespace-nowrap rounded-t-md`}
+                >
+                  <item.icon className="w-4 h-4 mr-1 xl:mr-2 flex-shrink-0" />
+                  <span className="hidden xl:inline">{item.name}</span>
+                  <span className="xl:hidden">{item.name.split(" ")[0]}</span>
+                </Link>
+              ))}
             </div>
 
             {/* Right side - User info and Desktop Logout */}
-            <div className="hidden lg:flex lg:items-center lg:space-x-2 xl:space-x-3 flex-shrink-0">
+            <div className="hidden lg:flex lg:items-center lg:space-x-2 flex-shrink-0">
               <div className="flex items-center text-sm max-w-xs">
                 <div className="flex flex-col items-end mr-2 min-w-0">
-                  <span className="font-medium text-gray-900 text-sm truncate max-w-full">
+                  <span className="font-medium text-gray-900 text-sm truncate max-w-[120px] xl:max-w-full">
                     {user?.first_name} {user?.last_name}
                   </span>
                   {user?.username && (
-                    <span className="text-xs text-gray-500 truncate max-w-full">
+                    <span className="text-xs text-gray-500 truncate max-w-[120px] xl:max-w-full">
                       @{user.username}
                     </span>
                   )}
