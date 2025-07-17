@@ -10,7 +10,7 @@ import {
   useElements,
 } from "@stripe/react-stripe-js";
 import axios from "axios";
-import { CheckIcon, XIcon } from "@heroicons/react/solid";
+import { CheckIcon } from "@heroicons/react/solid"; // Removed unused XIcon import
 import { CircularProgressbar, buildStyles } from "react-circular-progressbar";
 import "react-circular-progressbar/dist/styles.css";
 

@@ -7,8 +7,8 @@ import {
   RefreshIcon,
   TrashIcon,
   CheckIcon,
-  ExclamationTriangleIcon,
 } from "@heroicons/react/outline";
+import { ExclamationIcon } from "@heroicons/react/solid"; // Fixed import
 import { useTranslation } from "react-i18next";
 import UsageAlert from "../components/UsageAlert";
 
@@ -143,7 +143,7 @@ const Groups = () => {
 
     setAdding(true);
     try {
-      const response = await axios.post(
+      await axios.post(
         `${process.env.REACT_APP_API_URL}/api/groups/add-manually`,
         {
           group_identifier: groupIdentifier.trim(),
@@ -319,7 +319,7 @@ const Groups = () => {
             <div className="flex">
               <div className="flex-shrink-0">
                 {verificationResults.removed > 0 ? (
-                  <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" />
+                  <ExclamationIcon className="h-5 w-5 text-yellow-400" />
                 ) : (
                   <CheckIcon className="h-5 w-5 text-green-400" />
                 )}
@@ -481,7 +481,7 @@ const Groups = () => {
                             </div>
                           ) : (
                             <div className="flex items-center text-xs text-yellow-600">
-                              <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
+                              <ExclamationIcon className="h-3 w-3 mr-1" />
                               Needs verification
                             </div>
                           )}

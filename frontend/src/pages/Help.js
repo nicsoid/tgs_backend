@@ -1,7 +1,6 @@
 // src/pages/Help.js - Comprehensive App Usage Guide
 
 import React, { useState } from "react";
-import { useTranslation } from "react-i18next";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -11,15 +10,13 @@ import {
   ChartBarIcon,
   CogIcon,
   CreditCardIcon,
-  ExclamationTriangleIcon,
-  CheckCircleIcon,
   InformationCircleIcon,
   PlayIcon,
+  CheckCircleIcon,
 } from "@heroicons/react/outline";
-import { LightBulbIcon } from "@heroicons/react/solid";
+import { ExclamationIcon, LightBulbIcon } from "@heroicons/react/solid"; // Fixed imports
 
 const Help = () => {
-  const { t } = useTranslation();
   const [expandedSections, setExpandedSections] = useState({});
 
   const toggleSection = (sectionId) => {
@@ -90,7 +87,7 @@ const Help = () => {
 
     const icons = {
       info: InformationCircleIcon,
-      warning: ExclamationTriangleIcon,
+      warning: ExclamationIcon,
       success: CheckCircleIcon,
       tip: LightBulbIcon,
     };
@@ -634,7 +631,7 @@ const Help = () => {
       <Section
         id="troubleshooting"
         title="Troubleshooting"
-        icon={ExclamationTriangleIcon}
+        icon={ExclamationIcon}
       >
         <SubSection title="Common Issues">
           <div className="space-y-6">
@@ -814,10 +811,13 @@ const Help = () => {
       {/* Footer */}
       <div className="mt-12 text-center text-gray-500 border-t pt-8">
         <p>
-          Need more help? Contact our support team or check our
-          <a href="#" className="text-indigo-600 hover:text-indigo-800 ml-1">
-            FAQ section
-          </a>
+          Need more help? Contact our support team or visit our documentation at{" "}
+          <button
+            onClick={() => window.open("https://docs.example.com", "_blank")}
+            className="text-indigo-600 hover:text-indigo-800 underline"
+          >
+            docs.example.com
+          </button>
         </p>
       </div>
     </div>
