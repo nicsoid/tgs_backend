@@ -1,4 +1,4 @@
-// src/pages/Settings.js
+// src/pages/Settings.js - Fixed with immediate language switching
 
 import React, { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
@@ -41,6 +41,24 @@ const Settings = () => {
     }
   };
 
+  const handleLanguageChange = (newLanguage) => {
+    // Update local state
+    setSettings((prev) => ({ ...prev, language: newLanguage }));
+
+    // Immediately change the app language
+    i18n.changeLanguage(newLanguage);
+    localStorage.setItem("language", newLanguage);
+
+    // Update user context immediately for UI consistency
+    updateUser({
+      ...user,
+      settings: {
+        ...user.settings,
+        language: newLanguage,
+      },
+    });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -51,11 +69,7 @@ const Settings = () => {
         settings
       );
 
-      // Update language in i18n
-      i18n.changeLanguage(settings.language);
-      localStorage.setItem("language", settings.language);
-
-      // Update user context
+      // Update user context with all settings
       updateUser({ ...user, settings: response.data.settings });
 
       alert(t("settings_saved"));
@@ -91,7 +105,7 @@ const Settings = () => {
           </p>
         </div>
 
-        {/* Language */}
+        {/* Language - with immediate switching */}
         <div>
           <label
             htmlFor="language"
@@ -102,9 +116,7 @@ const Settings = () => {
           <select
             id="language"
             value={settings.language}
-            onChange={(e) =>
-              setSettings({ ...settings, language: e.target.value })
-            }
+            onChange={(e) => handleLanguageChange(e.target.value)}
             className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
           >
             {languages.map((lang) => (
@@ -113,6 +125,9 @@ const Settings = () => {
               </option>
             ))}
           </select>
+          <p className="mt-1 text-sm text-gray-500">
+            Language changes immediately for better user experience
+          </p>
         </div>
 
         {/* Currency */}

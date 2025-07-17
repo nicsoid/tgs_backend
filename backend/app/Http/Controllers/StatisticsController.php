@@ -1,13 +1,15 @@
 <?php
-// app/Http/Controllers/StatisticsController.php
+// app/Http/Controllers/StatisticsController.php - Fixed Group Statistics
 
 namespace App\Http\Controllers;
 
 use App\Models\ScheduledPost;
 use App\Models\PostLog;
 use App\Models\Currency;
+use App\Models\Group;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class StatisticsController extends Controller
 {
@@ -38,7 +40,7 @@ class StatisticsController extends Controller
         // Top advertisers
         $topAdvertisers = $this->getTopAdvertisers($user);
         
-        // Group statistics
+        // Group statistics - Fixed implementation
         $groupStats = $this->getGroupStats($user);
         
         return response()->json([
@@ -130,21 +132,116 @@ class StatisticsController extends Controller
     
     private function getGroupStats($user)
     {
-        return $user->groups()
-            ->with(['scheduledPosts' => function($query) use ($user) {
-                $query->where('user_id', $user->id);
-            }])
-            ->get()
-            ->map(function($group) {
-                return [
-                    'group' => $group->only(['_id', 'title', 'member_count']),
-                    'total_posts' => $group->scheduledPosts->count(),
-                    'last_post' => $group->scheduledPosts()
-                        ->orderBy('created_at', 'desc')
-                        ->first()
-                        ?->created_at
+        try {
+            // Get user's admin groups from the user_groups collection
+            $userGroupRelations = DB::connection('mongodb')
+                ->table('user_groups')
+                ->where('user_id', $user->id)
+                ->where('is_admin', true)
+                ->get();
+            
+            if ($userGroupRelations->isEmpty()) {
+                return [];
+            }
+            
+            $groupIds = $userGroupRelations->pluck('group_id')->toArray();
+            
+            // Get the groups
+            $groups = Group::whereIn('_id', $groupIds)->get();
+            
+            $groupStats = [];
+            
+            foreach ($groups as $group) {
+                $groupId = $group->id ?? $group->_id;
+                
+                // Count posts that include this group
+                $postsInGroup = $user->scheduledPosts()
+                    ->where(function($query) use ($groupId) {
+                        $query->whereJsonContains('group_ids', $groupId)
+                              ->orWhere('group_id', $groupId); // For backward compatibility
+                    })
+                    ->get();
+                
+                // Get the most recent post for this group
+                $lastPost = $postsInGroup
+                    ->sortByDesc('created_at')
+                    ->first();
+                
+                $groupStats[] = [
+                    'group' => [
+                        '_id' => $groupId,
+                        'title' => $group->title,
+                        'member_count' => $group->member_count ?? 0,
+                        'username' => $group->username
+                    ],
+                    'total_posts' => $postsInGroup->count(),
+                    'last_post' => $lastPost ? $lastPost->created_at : null,
+                    'total_messages_sent' => $this->getMessagesSentForGroup($user, $groupId),
+                    'total_revenue' => $this->getRevenueForGroup($user, $groupId, $postsInGroup)
                 ];
+            }
+            
+            // Sort by total posts descending
+            usort($groupStats, function($a, $b) {
+                return $b['total_posts'] - $a['total_posts'];
             });
+            
+            return $groupStats;
+            
+        } catch (\Exception $e) {
+            \Log::error('Error fetching group statistics', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return [];
+        }
+    }
+    
+    private function getMessagesSentForGroup($user, $groupId)
+    {
+        try {
+            return PostLog::whereHas('post', function($q) use ($user) {
+                $q->where('user_id', $user->id);
+            })
+            ->where('group_id', $groupId)
+            ->where('status', 'sent')
+            ->count();
+        } catch (\Exception $e) {
+            \Log::error('Error getting messages sent for group', [
+                'group_id' => $groupId,
+                'error' => $e->getMessage()
+            ]);
+            return 0;
+        }
+    }
+    
+    private function getRevenueForGroup($user, $groupId, $postsInGroup)
+    {
+        try {
+            $totalRevenue = 0;
+            
+            foreach ($postsInGroup as $post) {
+                // Calculate revenue per group for this post
+                $groupCount = count($post->group_ids ?? [$post->group_id]);
+                $revenuePerGroup = $post->advertiser['amount_paid'] / max(1, $groupCount);
+                
+                $totalRevenue += $this->convertCurrency(
+                    $revenuePerGroup,
+                    $post->advertiser['currency'],
+                    $user->getCurrency()
+                );
+            }
+            
+            return round($totalRevenue, 2);
+        } catch (\Exception $e) {
+            \Log::error('Error calculating revenue for group', [
+                'group_id' => $groupId,
+                'error' => $e->getMessage()
+            ]);
+            return 0;
+        }
     }
     
     private function convertCurrency($amount, $from, $to)
@@ -153,15 +250,25 @@ class StatisticsController extends Controller
             return $amount;
         }
         
-        $fromCurrency = Currency::where('code', $from)->first();
-        $toCurrency = Currency::where('code', $to)->first();
-        
-        if (!$fromCurrency || !$toCurrency) {
+        try {
+            $fromCurrency = Currency::where('code', $from)->first();
+            $toCurrency = Currency::where('code', $to)->first();
+            
+            if (!$fromCurrency || !$toCurrency) {
+                return $amount;
+            }
+            
+            // Convert to USD first, then to target currency
+            $usdAmount = $amount / $fromCurrency->exchange_rate;
+            return $usdAmount * $toCurrency->exchange_rate;
+        } catch (\Exception $e) {
+            \Log::error('Currency conversion error', [
+                'amount' => $amount,
+                'from' => $from,
+                'to' => $to,
+                'error' => $e->getMessage()
+            ]);
             return $amount;
         }
-        
-        // Convert to USD first, then to target currency
-        $usdAmount = $amount / $fromCurrency->exchange_rate;
-        return $usdAmount * $toCurrency->exchange_rate;
     }
 }

@@ -1,4 +1,4 @@
-// src/pages/Statistics.js
+// src/pages/Statistics.js - Improved Group Statistics
 
 import React, { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
@@ -22,6 +22,7 @@ import {
   CurrencyDollarIcon,
   ChartBarIcon,
   UserGroupIcon,
+  ExclamationTriangleIcon,
 } from "@heroicons/react/outline";
 
 const Statistics = () => {
@@ -30,6 +31,7 @@ const Statistics = () => {
   const [loading, setLoading] = useState(true);
   const [selectedPost, setSelectedPost] = useState(null);
   const [postDetails, setPostDetails] = useState(null);
+  const [error, setError] = useState(null);
 
   const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8"];
 
@@ -39,12 +41,15 @@ const Statistics = () => {
 
   const fetchStatistics = async () => {
     try {
+      setLoading(true);
+      setError(null);
       const response = await axios.get(
         `${process.env.REACT_APP_API_URL}/api/statistics`
       );
       setStats(response.data);
     } catch (error) {
       console.error("Failed to fetch statistics:", error);
+      setError("Failed to load statistics. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -66,6 +71,40 @@ const Statistics = () => {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-md bg-red-50 p-4">
+        <div className="flex">
+          <div className="flex-shrink-0">
+            <ExclamationTriangleIcon className="h-5 w-5 text-red-400" />
+          </div>
+          <div className="ml-3">
+            <h3 className="text-sm font-medium text-red-800">Error</h3>
+            <div className="mt-2 text-sm text-red-700">
+              <p>{error}</p>
+            </div>
+            <div className="mt-4">
+              <button
+                onClick={fetchStatistics}
+                className="bg-red-100 px-2 py-1 text-sm text-red-800 rounded hover:bg-red-200"
+              >
+                Try Again
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!stats) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-500">No statistics available</p>
       </div>
     );
   }
@@ -131,7 +170,7 @@ const Statistics = () => {
                   </dt>
                   <dd className="text-lg font-medium text-gray-900">
                     {stats.overall.currency}{" "}
-                    {stats.overall.total_revenue.toFixed(2)}
+                    {(stats.overall.total_revenue || 0).toFixed(2)}
                   </dd>
                 </dl>
               </div>
@@ -168,97 +207,140 @@ const Statistics = () => {
       </div>
 
       {/* Monthly Chart */}
-      <div className="bg-white shadow rounded-lg p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">
-          {t("monthly_statistics")}
-        </h2>
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={stats.monthly}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="month" />
-            <YAxis yAxisId="left" />
-            <YAxis yAxisId="right" orientation="right" />
-            <Tooltip />
-            <Legend />
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="count"
-              stroke="#8884d8"
-              name={t("posts_sent")}
-            />
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="revenue"
-              stroke="#82ca9d"
-              name={t("revenue")}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      {stats.monthly && stats.monthly.length > 0 && (
+        <div className="bg-white shadow rounded-lg p-6">
+          <h2 className="text-lg font-medium text-gray-900 mb-4">
+            {t("monthly_statistics")}
+          </h2>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={stats.monthly}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" />
+              <YAxis yAxisId="left" />
+              <YAxis yAxisId="right" orientation="right" />
+              <Tooltip />
+              <Legend />
+              <Line
+                yAxisId="left"
+                type="monotone"
+                dataKey="count"
+                stroke="#8884d8"
+                name={t("posts_sent")}
+              />
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="revenue"
+                stroke="#82ca9d"
+                name={t("revenue")}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Top Advertisers */}
-      <div className="bg-white shadow rounded-lg p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">
-          {t("top_advertisers")}
-        </h2>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={stats.top_advertisers.slice(0, 10)}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="username" />
-            <YAxis />
-            <Tooltip />
-            <Bar dataKey="total_paid" fill="#8884d8" name={t("total_paid")} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+      {stats.top_advertisers && stats.top_advertisers.length > 0 && (
+        <div className="bg-white shadow rounded-lg p-6">
+          <h2 className="text-lg font-medium text-gray-900 mb-4">
+            {t("top_advertisers")}
+          </h2>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={stats.top_advertisers.slice(0, 10)}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="username" />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="total_paid" fill="#8884d8" name={t("total_paid")} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
-      {/* Group Statistics */}
+      {/* Group Statistics - Improved */}
       <div className="bg-white shadow rounded-lg p-6">
         <h2 className="text-lg font-medium text-gray-900 mb-4">
           {t("group_statistics")}
         </h2>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  {t("group")}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  {t("members")}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  {t("total_posts")}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  {t("last_post")}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {stats.group_stats.map((group) => (
-                <tr key={group.group._id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {group.group.title}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {group.group.member_count}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {group.total_posts}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {group.last_post
-                      ? new Date(group.last_post).toLocaleDateString()
-                      : "-"}
-                  </td>
+
+        {stats.group_stats && stats.group_stats.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {t("group")}
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {t("members")}
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {t("total_posts")}
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Messages Sent
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Revenue ({stats.overall.currency})
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {t("last_post")}
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {stats.group_stats.map((groupStat, index) => (
+                  <tr
+                    key={groupStat.group._id || index}
+                    className="hover:bg-gray-50"
+                  >
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <div className="text-sm font-medium text-gray-900">
+                          {groupStat.group.title}
+                        </div>
+                        {groupStat.group.username && (
+                          <div className="text-xs text-gray-500 ml-2">
+                            @{groupStat.group.username}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {groupStat.group.member_count?.toLocaleString() || 0}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                      {groupStat.total_posts}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {groupStat.total_messages_sent || 0}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {groupStat.total_revenue
+                        ? groupStat.total_revenue.toFixed(2)
+                        : "0.00"}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {groupStat.last_post
+                        ? new Date(groupStat.last_post).toLocaleDateString()
+                        : t("never")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
+            <h3 className="mt-2 text-sm font-medium text-gray-900">
+              No Group Data
+            </h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Add some groups and schedule posts to see group statistics.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Post Details Modal */}

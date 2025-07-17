@@ -1,4 +1,4 @@
-// src/components/Layout.js - Fixed version
+// src/components/Layout.js - With Language Selector in Header
 
 import React, { useState, useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -13,6 +13,8 @@ import {
   LogoutIcon,
   ClockIcon,
   CreditCardIcon,
+  GlobeAltIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/outline";
 
 // Simple hamburger and close icons using SVG
@@ -49,22 +51,34 @@ const CloseIcon = ({ className }) => (
 );
 
 const Layout = () => {
-  const { t } = useTranslation();
-  const { user, logout } = useAuth();
+  const { t, i18n } = useTranslation();
+  const { user, logout, updateUser } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
+
+  const languages = [
+    { code: "en", name: "EN", fullName: "English" },
+    { code: "uk", name: "UK", fullName: "Українська" },
+    { code: "ru", name: "RU", fullName: "Русский" },
+    { code: "de", name: "DE", fullName: "Deutsch" },
+    { code: "es", name: "ES", fullName: "Español" },
+  ];
 
   // Close mobile menu when route changes
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [location.pathname]);
 
-  // Close mobile menu when clicking outside
+  // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (mobileMenuOpen && !event.target.closest(".nav-container")) {
         setMobileMenuOpen(false);
+      }
+      if (languageDropdownOpen && !event.target.closest(".language-dropdown")) {
+        setLanguageDropdownOpen(false);
       }
     };
 
@@ -72,7 +86,7 @@ const Layout = () => {
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [mobileMenuOpen]);
+  }, [mobileMenuOpen, languageDropdownOpen]);
 
   const navigation = [
     { name: t("dashboard"), href: "/dashboard", icon: HomeIcon },
@@ -82,6 +96,7 @@ const Layout = () => {
     { name: t("statistics"), href: "/statistics", icon: ChartBarIcon },
     { name: t("subscription"), href: "/subscription", icon: CreditCardIcon },
     { name: t("settings"), href: "/settings", icon: CogIcon },
+    { name: "Help", href: "/help", icon: InformationCircleIcon },
   ];
 
   const handleLogout = () => {
@@ -92,6 +107,53 @@ const Layout = () => {
 
   const handleNavClick = () => {
     setMobileMenuOpen(false);
+  };
+
+  const changeLanguage = async (langCode) => {
+    try {
+      // Change language immediately
+      i18n.changeLanguage(langCode);
+      localStorage.setItem("language", langCode);
+
+      // Update user context
+      const updatedUser = {
+        ...user,
+        settings: {
+          ...user.settings,
+          language: langCode,
+        },
+      };
+      updateUser(updatedUser);
+
+      // Save to backend
+      const response = await fetch(
+        `${process.env.REACT_APP_API_URL}/api/user/settings`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+          body: JSON.stringify({
+            ...user.settings,
+            language: langCode,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        console.error("Failed to save language setting");
+      }
+    } catch (error) {
+      console.error("Error changing language:", error);
+    }
+
+    setLanguageDropdownOpen(false);
+  };
+
+  const getCurrentLanguage = () => {
+    const currentLang = i18n.language || user?.settings?.language || "en";
+    return languages.find((lang) => lang.code === currentLang) || languages[0];
   };
 
   return (
@@ -134,8 +196,38 @@ const Layout = () => {
               ))}
             </div>
 
-            {/* Right side - User info and Desktop Logout */}
+            {/* Right side - Language, User info and Desktop Logout */}
             <div className="hidden lg:flex lg:items-center lg:space-x-2 flex-shrink-0">
+              {/* Language Selector */}
+              <div className="relative language-dropdown">
+                <button
+                  onClick={() => setLanguageDropdownOpen(!languageDropdownOpen)}
+                  className="inline-flex items-center px-2 py-1 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  <GlobeAltIcon className="w-4 h-4 mr-1" />
+                  {getCurrentLanguage().name}
+                </button>
+
+                {languageDropdownOpen && (
+                  <div className="absolute right-0 mt-2 w-40 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-200">
+                    {languages.map((lang) => (
+                      <button
+                        key={lang.code}
+                        onClick={() => changeLanguage(lang.code)}
+                        className={`${
+                          getCurrentLanguage().code === lang.code
+                            ? "bg-indigo-50 text-indigo-700"
+                            : "text-gray-700 hover:bg-gray-100"
+                        } block w-full text-left px-4 py-2 text-sm`}
+                      >
+                        {lang.fullName}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* User Info */}
               <div className="flex items-center text-sm max-w-xs">
                 <div className="flex flex-col items-end mr-2 min-w-0">
                   <span className="font-medium text-gray-900 text-sm truncate max-w-[120px] xl:max-w-full">
@@ -171,7 +263,36 @@ const Layout = () => {
             </div>
 
             {/* Mobile menu button */}
-            <div className="lg:hidden flex items-center">
+            <div className="lg:hidden flex items-center space-x-2">
+              {/* Mobile Language Selector */}
+              <div className="relative language-dropdown">
+                <button
+                  onClick={() => setLanguageDropdownOpen(!languageDropdownOpen)}
+                  className="inline-flex items-center p-2 text-gray-400 hover:text-gray-500 hover:bg-gray-100 rounded-md transition-colors"
+                >
+                  <GlobeAltIcon className="w-5 h-5" />
+                </button>
+
+                {languageDropdownOpen && (
+                  <div className="absolute right-0 mt-2 w-36 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-200">
+                    {languages.map((lang) => (
+                      <button
+                        key={lang.code}
+                        onClick={() => changeLanguage(lang.code)}
+                        className={`${
+                          getCurrentLanguage().code === lang.code
+                            ? "bg-indigo-50 text-indigo-700"
+                            : "text-gray-700 hover:bg-gray-100"
+                        } block w-full text-left px-4 py-2 text-sm`}
+                      >
+                        {lang.fullName}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Hamburger Menu Button */}
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
                 className="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500 transition-colors"

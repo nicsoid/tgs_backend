@@ -1,6 +1,6 @@
-// src/pages/Calendar.js - Fixed 24h Version
+// src/pages/Calendar.js - Complete Fixed Version
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import FullCalendar from "@fullcalendar/react";
@@ -20,10 +20,24 @@ const Calendar = () => {
   const [groups, setGroups] = useState([]);
   const [showAvailableSlots, setShowAvailableSlots] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const calendarRef = useRef(null);
 
   useEffect(() => {
     fetchGroups();
   }, []);
+
+  // Trigger calendar data fetch when group selection changes
+  useEffect(() => {
+    if (groups.length > 0) {
+      // Get current date range from calendar if available
+      if (calendarRef.current) {
+        const calendarApi = calendarRef.current.getApi();
+        const view = calendarApi.view;
+        fetchCalendarData(view.activeStart, view.activeEnd);
+      }
+    }
+  }, [selectedGroup, groups.length]);
 
   const fetchGroups = async () => {
     try {
@@ -37,6 +51,9 @@ const Calendar = () => {
   };
 
   const fetchCalendarData = async (start, end) => {
+    if (loading) return; // Prevent multiple simultaneous requests
+
+    setLoading(true);
     try {
       const params = {
         start_date: start.toISOString().split("T")[0],
@@ -47,6 +64,8 @@ const Calendar = () => {
         params.group_id = selectedGroup;
       }
 
+      console.log("Fetching calendar data with params:", params);
+
       const response = await axios.get(
         `${process.env.REACT_APP_API_URL}/api/calendar`,
         { params }
@@ -54,8 +73,18 @@ const Calendar = () => {
 
       setEvents(response.data.events || []);
       setAvailableSlots(response.data.available_slots || []);
+
+      console.log("Calendar data fetched:", {
+        events: response.data.events?.length || 0,
+        availableSlots: response.data.available_slots?.length || 0,
+        selectedGroup,
+      });
     } catch (error) {
       console.error("Failed to fetch calendar data:", error);
+      setEvents([]);
+      setAvailableSlots([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -64,7 +93,34 @@ const Calendar = () => {
   };
 
   const handleEventClick = (clickInfo) => {
-    setSelectedEvent(clickInfo.event.extendedProps);
+    // Don't show modal for available slots
+    if (clickInfo.event.extendedProps?.isAvailableSlot) {
+      console.log("Clicked on available slot - not showing modal");
+      return;
+    }
+
+    // Ensure we have valid extended props before setting
+    if (
+      clickInfo.event.extendedProps &&
+      Object.keys(clickInfo.event.extendedProps).length > 0
+    ) {
+      setSelectedEvent(clickInfo.event.extendedProps);
+    } else {
+      console.warn(
+        "Event clicked but no extended props found:",
+        clickInfo.event
+      );
+    }
+  };
+
+  const handleGroupChange = (e) => {
+    const newGroupId = e.target.value;
+    console.log("Group selection changed:", newGroupId);
+    setSelectedGroup(newGroupId);
+
+    // Clear existing data while loading new data
+    setEvents([]);
+    setAvailableSlots([]);
   };
 
   const renderEventContent = (eventInfo) => {
@@ -77,7 +133,16 @@ const Calendar = () => {
   };
 
   const calendarEvents = [
-    ...events,
+    ...events.map((event) => ({
+      ...event,
+      // Show only the exact scheduled time, not +30 minutes
+      end: event.start,
+      // Ensure we don't override existing extendedProps
+      extendedProps: {
+        ...event.extendedProps,
+        isAvailableSlot: false,
+      },
+    })),
     ...(showAvailableSlots
       ? availableSlots.map((slot, index) => ({
           id: `slot_${index}`,
@@ -87,6 +152,9 @@ const Calendar = () => {
           backgroundColor: "#10B981",
           borderColor: "#10B981",
           classNames: ["available-slot"],
+          extendedProps: {
+            isAvailableSlot: true,
+          },
         }))
       : []),
   ];
@@ -101,16 +169,19 @@ const Calendar = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <h1 className="text-2xl font-semibold text-gray-900">
           {t("calendar")}
         </h1>
 
-        <div className="flex items-center space-x-4">
+        {/* Mobile-responsive controls */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+          {/* Group selector - responsive width */}
           <select
             value={selectedGroup}
-            onChange={(e) => setSelectedGroup(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+            onChange={handleGroupChange}
+            disabled={loading}
+            className="w-full sm:w-auto min-w-0 sm:min-w-[200px] px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm disabled:opacity-50"
           >
             <option value="">{t("all_groups")}</option>
             {groups.map((group) => (
@@ -120,22 +191,37 @@ const Calendar = () => {
             ))}
           </select>
 
-          <label className="flex items-center">
+          {/* Available slots checkbox - better mobile layout */}
+          <label className="flex items-center whitespace-nowrap">
             <input
               type="checkbox"
               checked={showAvailableSlots}
               onChange={(e) => setShowAvailableSlots(e.target.checked)}
-              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+              disabled={loading}
+              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50"
             />
             <span className="ml-2 text-sm text-gray-700">
               {t("show_available_slots")}
+              {selectedGroup && (
+                <span className="text-xs text-gray-500 block">
+                  (for selected group)
+                </span>
+              )}
             </span>
           </label>
         </div>
       </div>
 
-      <div className="bg-white shadow rounded-lg p-6">
+      {loading && (
+        <div className="flex justify-center items-center py-4">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600"></div>
+          <span className="ml-2 text-sm text-gray-600">Loading...</span>
+        </div>
+      )}
+
+      <div className="bg-white shadow rounded-lg p-3 sm:p-6">
         <FullCalendar
+          ref={calendarRef}
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
           initialView="timeGridWeek"
           headerToolbar={{
@@ -149,143 +235,160 @@ const Calendar = () => {
           eventContent={renderEventContent}
           height="auto"
           // 24-hour display settings
-          slotMinTime="00:00:00" // Start at midnight
-          slotMaxTime="24:00:00" // End at midnight next day (shows full 24h)
+          slotMinTime="00:00:00"
+          slotMaxTime="24:00:00"
           // Time format and timezone settings
-          timeZone={getUserTimezone()} // Use user's timezone
+          timeZone={getUserTimezone()}
           locale={user?.settings?.language || "en"}
           // Time display format
           eventTimeFormat={{
             hour: "2-digit",
             minute: "2-digit",
-            hour12: false, // 24-hour format (00:00 - 23:59)
+            hour12: false,
           }}
           slotLabelFormat={{
             hour: "2-digit",
             minute: "2-digit",
-            hour12: false, // 24-hour format for time slots
+            hour12: false,
           }}
           // Other display settings
           eventMaxStack={3}
           dayMaxEvents={true}
-          allDaySlot={false} // Hide all-day row since we're scheduling specific times
+          allDaySlot={false}
           // Slot settings
-          slotDuration="00:30:00" // 30-minute slots
-          slotLabelInterval="01:00:00" // Show hour labels every hour
-          // Week starts on Monday (common in many countries)
+          slotDuration="00:30:00"
+          slotLabelInterval="01:00:00"
+          // Week starts on Monday
           firstDay={1}
           // Better mobile responsiveness
           aspectRatio={window.innerWidth < 768 ? 0.8 : 1.35}
+          // Show events at their exact time without extending duration
+          eventDisplay="block"
+          // Responsive toolbar for mobile
+          headerToolbar={{
+            left: window.innerWidth < 768 ? "prev,next" : "prev,next today",
+            center: "title",
+            right:
+              window.innerWidth < 768
+                ? "timeGridDay"
+                : "dayGridMonth,timeGridWeek,timeGridDay",
+          }}
+          // Loading state
+          loading={loading}
         />
       </div>
 
       {/* Enhanced Event Details Modal */}
       {selectedEvent && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-start mb-4">
-              <h3 className="text-lg font-medium text-gray-900">
-                {t("post_details")}
-              </h3>
-              {selectedEvent.can_edit && (
-                <Link
-                  to={`/posts/edit/${selectedEvent.post_id}`}
-                  className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                  onClick={() => setSelectedEvent(null)}
-                >
-                  <PencilIcon className="w-4 h-4 mr-1" />
-                  {t("edit_post")}
-                </Link>
-              )}
-            </div>
-
-            <div className="space-y-4">
-              {/* Groups - Enhanced for multiple groups */}
-              <div>
-                <p className="text-sm font-medium text-gray-500">
-                  {selectedEvent.groups_count > 1 ? t("groups") : t("group")}(
-                  {selectedEvent.groups_count})
-                </p>
-                <div className="text-sm text-gray-900">
-                  {selectedEvent.groups_count <= 3 ? (
-                    // Show all groups if 3 or less
-                    <div className="space-y-1">
-                      {selectedEvent.groups.map((group, index) => (
-                        <div key={index} className="flex items-center">
-                          <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
-                          {group}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    // Show formatted text for many groups
-                    <p>{selectedEvent.groups_text}</p>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-gray-500">
-                  {t("advertiser")}
-                </p>
-                <p className="text-sm text-gray-900">
-                  @{selectedEvent.advertiser}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-gray-500">
-                  {t("amount")}
-                </p>
-                <p className="text-sm text-gray-900">
-                  {selectedEvent.currency} {selectedEvent.amount}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-gray-500">
-                  {t("status")}
-                </p>
-                <span
-                  className={`inline-flex px-2 py-1 text-xs rounded-full ${
-                    selectedEvent.status === "pending"
-                      ? "bg-yellow-100 text-yellow-800"
-                      : selectedEvent.status === "completed"
-                      ? "bg-green-100 text-green-800"
-                      : selectedEvent.status === "partially_sent"
-                      ? "bg-blue-100 text-blue-800"
-                      : "bg-red-100 text-red-800"
-                  }`}
-                >
-                  {t(`status_${selectedEvent.status}`)}
-                </span>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-gray-500">
-                  {t("message_preview")}
-                </p>
-                <div className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md max-h-32 overflow-y-auto">
-                  {selectedEvent.content_preview}
-                  {selectedEvent.content_preview.length >= 150 && "..."}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-between">
-              <div>
-                {!selectedEvent.can_edit && (
-                  <p className="text-xs text-gray-500">
-                    {t("cannot_edit_sent_post")}
-                  </p>
+        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-4">
+                <h3 className="text-lg font-medium text-gray-900">
+                  {t("post_details")}
+                </h3>
+                {selectedEvent.can_edit && (
+                  <Link
+                    to={`/posts/edit/${selectedEvent.post_id}`}
+                    className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    onClick={() => setSelectedEvent(null)}
+                  >
+                    <PencilIcon className="w-4 h-4 mr-1" />
+                    {t("edit_post")}
+                  </Link>
                 )}
               </div>
-              <button
-                onClick={() => setSelectedEvent(null)}
-                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                {t("close")}
-              </button>
+
+              <div className="space-y-4">
+                {/* Groups - Enhanced for multiple groups */}
+                <div>
+                  <p className="text-sm font-medium text-gray-500">
+                    {selectedEvent.groups_count > 1 ? t("groups") : t("group")}(
+                    {selectedEvent.groups_count})
+                  </p>
+                  <div className="text-sm text-gray-900">
+                    {selectedEvent.groups_count <= 3 ? (
+                      // Show all groups if 3 or less
+                      <div className="space-y-1">
+                        {selectedEvent.groups.map((group, index) => (
+                          <div key={index} className="flex items-center">
+                            <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                            {group}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      // Show formatted text for many groups
+                      <p>{selectedEvent.groups_text}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-gray-500">
+                    {t("advertiser")}
+                  </p>
+                  <p className="text-sm text-gray-900">
+                    @{selectedEvent.advertiser}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-gray-500">
+                    {t("amount")}
+                  </p>
+                  <p className="text-sm text-gray-900">
+                    {selectedEvent.currency} {selectedEvent.amount}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-gray-500">
+                    {t("status")}
+                  </p>
+                  <span
+                    className={`inline-flex px-2 py-1 text-xs rounded-full ${
+                      selectedEvent.status === "pending"
+                        ? "bg-yellow-100 text-yellow-800"
+                        : selectedEvent.status === "completed"
+                        ? "bg-green-100 text-green-800"
+                        : selectedEvent.status === "partially_sent"
+                        ? "bg-blue-100 text-blue-800"
+                        : "bg-red-100 text-red-800"
+                    }`}
+                  >
+                    {t(`status_${selectedEvent.status}`)}
+                  </span>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-gray-500">
+                    {t("message_preview")}
+                  </p>
+                  <div className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md max-h-32 overflow-y-auto">
+                    {selectedEvent.content_preview}
+                    {selectedEvent.content_preview &&
+                      selectedEvent.content_preview.length >= 150 &&
+                      "..."}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-between">
+                <div>
+                  {!selectedEvent.can_edit && (
+                    <p className="text-xs text-gray-500">
+                      {t("cannot_edit_sent_post")}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setSelectedEvent(null)}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  {t("close")}
+                </button>
+              </div>
             </div>
           </div>
         </div>

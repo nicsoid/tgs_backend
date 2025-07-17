@@ -196,5 +196,7 @@
   "no_media_changes": "No media changes made",
   "media_preview": "Media Preview",
   "existing_media": "Existing Media",
-  "new_media": "New Media"
+  "new_media": "New Media",
+  "never": "Never",
+  "cannot_edit_sent_post": "Cannot edit posts that have already started sending"
 }
