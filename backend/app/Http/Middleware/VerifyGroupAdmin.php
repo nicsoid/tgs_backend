@@ -5,24 +5,14 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use App\Services\TelegramService;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use App\Models\Group;
+use App\Models\ScheduledPost;
 
 class VerifyGroupAdmin
 {
-    protected $telegramService;
-
-    public function __construct(TelegramService $telegramService)
-    {
-        $this->telegramService = $telegramService;
-    }
-
     /**
      * Handle an incoming request.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \Closure  $next
-     * @return mixed
      */
     public function handle(Request $request, Closure $next)
     {
@@ -32,55 +22,84 @@ class VerifyGroupAdmin
             return response()->json(['error' => 'Unauthorized'], 401);
         }
 
-        // Only apply this middleware to POST and PUT requests for scheduled posts
-        if (!in_array($request->method(), ['POST', 'PUT']) || 
-            !str_contains($request->path(), 'scheduled-posts')) {
-            return $next($request);
-        }
+        // Get group IDs from the request
+        $groupIds = $this->getGroupIdsFromRequest($request);
 
-        // Check if group_ids are being submitted
-        $groupIds = $request->input('group_ids', []);
-        
         if (empty($groupIds)) {
-            return $next($request);
+            return response()->json([
+                'error' => 'No groups specified',
+                'message' => 'Please select at least one group.'
+            ], 422);
         }
 
-        Log::info('Verifying admin status for groups in middleware', [
-            'user_id' => $user->id,
-            'group_ids' => $groupIds,
-            'route' => $request->path(),
-            'method' => $request->method()
-        ]);
+        // Verify user is admin in all specified groups
+        $userGroupIds = DB::connection('mongodb')
+            ->table('user_groups')
+            ->where('user_id', $user->id)
+            ->where('is_admin', true)
+            ->pluck('group_id')
+            ->toArray();
 
-        try {
-            // Quick verification for all user's groups
-            $verificationResult = $this->telegramService->verifyUserAdminStatusForAllGroups($user);
-            
-            Log::info('Middleware admin verification completed', [
-                'user_id' => $user->id,
-                'verification_result' => $verificationResult
-            ]);
-
-            // If any groups were removed, the request should probably fail
-            if ($verificationResult['removed'] > 0) {
-                return response()->json([
-                    'error' => 'Admin status verification failed',
-                    'message' => "You've lost admin access to {$verificationResult['removed']} group(s). Please refresh and try again.",
-                    'verification_result' => $verificationResult
-                ], 403);
+        $unauthorizedGroups = [];
+        $groups = Group::whereIn('_id', $groupIds)->get();
+        
+        foreach ($groups as $group) {
+            $groupId = $group->id ?? $group->_id;
+            if (!in_array($groupId, $userGroupIds)) {
+                $unauthorizedGroups[] = $group->title;
             }
+        }
 
-        } catch (\Exception $e) {
-            Log::error('Error in admin verification middleware', [
-                'user_id' => $user->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            // Don't block the request on verification errors, but log them
-            // The controller will handle detailed verification
+        if (!empty($unauthorizedGroups)) {
+            return response()->json([
+                'error' => 'Not authorized for all groups',
+                'message' => 'You are not an admin in these groups: ' . implode(', ', $unauthorizedGroups),
+                'unauthorized_groups' => $unauthorizedGroups
+            ], 403);
         }
 
         return $next($request);
+    }
+
+    /**
+     * Extract group IDs from the request based on the route and method
+     */
+    private function getGroupIdsFromRequest(Request $request)
+    {
+        $groupIds = [];
+        
+        // For POST requests (creating new posts)
+        if ($request->isMethod('POST')) {
+            $groupIds = $request->input('group_ids', []);
+        }
+        
+        // For PUT/PATCH requests (updating existing posts)
+        elseif ($request->isMethod('PUT') || $request->isMethod('PATCH')) {
+            // First check if group_ids are being updated
+            if ($request->has('group_ids')) {
+                $groupIds = $request->input('group_ids', []);
+            } else {
+                // If no group_ids in request, get them from existing post
+                $postId = $request->route('id');
+                if ($postId) {
+                    $existingPost = ScheduledPost::where('user_id', $request->user()->id)
+                        ->where(function($query) use ($postId) {
+                            $query->where('_id', $postId)->orWhere('id', $postId);
+                        })
+                        ->first();
+                        
+                    if ($existingPost) {
+                        $groupIds = $existingPost->group_ids ?? [];
+                    }
+                }
+            }
+        }
+
+        // Ensure it's an array and remove any empty values
+        if (!is_array($groupIds)) {
+            $groupIds = [];
+        }
+
+        return array_filter($groupIds);
     }
 }

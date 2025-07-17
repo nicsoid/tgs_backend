@@ -244,7 +244,7 @@ const SubscriptionPage = () => {
         <p className="text-base text-gray-500">
           {t("need_more_groups_or_messages")}{" "}
           <a
-            href="mailto:support@telegramscheduler.com"
+            href="mailto:support@tgappy.com"
             className="font-medium text-indigo-600 hover:text-indigo-500"
           >
             {t("contact_us")}

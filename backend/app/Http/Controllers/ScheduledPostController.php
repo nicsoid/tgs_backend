@@ -63,8 +63,8 @@ class ScheduledPostController extends Controller
 
         $user = $request->user();
         
-        // Validate all groups exist and user is admin
-        $groupIds = array_unique($request->group_ids); // Remove duplicates
+        // Validate all groups exist (middleware already verified admin access)
+        $groupIds = array_unique($request->group_ids);
         $groups = Group::whereIn('_id', $groupIds)->get();
         
         if ($groups->count() !== count($groupIds)) {
@@ -74,27 +74,7 @@ class ScheduledPostController extends Controller
             ], 422);
         }
         
-        // Verify user is admin in all groups
-        $userGroupIds = \DB::connection('mongodb')
-            ->table('user_groups')
-            ->where('user_id', $user->id)
-            ->where('is_admin', true)
-            ->pluck('group_id')
-            ->toArray();
-        
-        $unauthorizedGroups = [];
-        foreach ($groups as $group) {
-            if (!in_array($group->id, $userGroupIds)) {
-                $unauthorizedGroups[] = $group->title;
-            }
-        }
-        
-        if (!empty($unauthorizedGroups)) {
-            return response()->json([
-                'error' => 'Not authorized',
-                'message' => 'You are not an admin in these groups: ' . implode(', ', $unauthorizedGroups)
-            ], 403);
-        }
+        // NOTE: Admin verification is now handled by middleware
         
         // Check message limit (groups * schedule times)
         $scheduleCount = count($request->schedule_times);

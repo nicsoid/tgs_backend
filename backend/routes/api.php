@@ -47,7 +47,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/scheduled-posts/{id}', [ScheduledPostController::class, 'show']);
     
     // Routes that require admin verification
-    Route::middleware('verify.group.admin')->group(function () {
+    Route::middleware(\App\Http\Middleware\VerifyGroupAdmin::class)->group(function () {
         Route::post('/scheduled-posts', [ScheduledPostController::class, 'store']);
         Route::put('/scheduled-posts/{id}', [ScheduledPostController::class, 'update']);
         Route::post('/scheduled-posts/{id}/update-with-media', [ScheduledPostController::class, 'update']);
@@ -187,3 +187,13 @@ if (app()->environment('local')) {
         ]);
     });
 }
+
+
+Route::get('/test-middleware', function() {
+    try {
+        $middleware = new \App\Http\Middleware\VerifyGroupAdmin();
+        return response()->json(['status' => 'Middleware class exists']);
+    } catch (\Exception $e) {
+        return response()->json(['error' => $e->getMessage()]);
+    }
+});
