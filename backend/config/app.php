@@ -163,6 +163,15 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Admin Configuration
+    |--------------------------------------------------------------------------
+    */
+    'admin_telegram_ids' => env('ADMIN_TELEGRAM_IDS', ''),
+    'admin_usernames' => env('ADMIN_USERNAMES', ''),
+    'version' => env('APP_VERSION', '1.0.0'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Autoloaded Service Providers
     |--------------------------------------------------------------------------
     |
@@ -191,6 +200,7 @@ return [
          * Application Service Providers...
          */
         App\Providers\AppServiceProvider::class,
+        App\Providers\AdminServiceProvider::class,
         
     ])->toArray(),
 

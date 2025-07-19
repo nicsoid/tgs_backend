@@ -87,16 +87,24 @@ class ScheduledPost extends Model
         parent::boot();
         
         static::creating(function ($post) {
-            // Convert schedule times to UTC
+            // Convert schedule times to UTC with proper timezone handling
+            $userTimezone = $post->user_timezone ?: 'UTC';
+            
             $post->schedule_times_utc = collect($post->schedule_times)
-                ->map(function ($time) use ($post) {
-                    return Carbon::parse($time, $post->user_timezone)
-                        ->setTimezone('UTC')
-                        ->toDateTimeString();
+                ->map(function ($time) use ($userTimezone) {
+                    try {
+                        // Parse time in user's timezone and convert to UTC
+                        $carbonTime = Carbon::parse($time, $userTimezone);
+                        return $carbonTime->utc()->format('Y-m-d H:i:s');
+                    } catch (\Exception $e) {
+                        \Log::error("Error converting time {$time} from {$userTimezone} to UTC: " . $e->getMessage());
+                        // Fallback: assume it's already UTC
+                        return Carbon::parse($time)->format('Y-m-d H:i:s');
+                    }
                 })
                 ->toArray();
             
-            // Calculate total scheduled messages (groups * schedule times)
+            // Calculate total scheduled messages (groups × schedule times)
             $groupCount = count($post->group_ids ?? []);
             $timeCount = count($post->schedule_times ?? []);
             $post->total_scheduled = $groupCount * $timeCount;
@@ -107,11 +115,17 @@ class ScheduledPost extends Model
             // Recalculate if schedule times or groups changed
             if ($post->isDirty(['schedule_times', 'group_ids'])) {
                 if ($post->isDirty('schedule_times')) {
+                    $userTimezone = $post->user_timezone ?: 'UTC';
+                    
                     $post->schedule_times_utc = collect($post->schedule_times)
-                        ->map(function ($time) use ($post) {
-                            return Carbon::parse($time, $post->user_timezone)
-                                ->setTimezone('UTC')
-                                ->toDateTimeString();
+                        ->map(function ($time) use ($userTimezone) {
+                            try {
+                                $carbonTime = Carbon::parse($time, $userTimezone);
+                                return $carbonTime->utc()->format('Y-m-d H:i:s');
+                            } catch (\Exception $e) {
+                                \Log::error("Error converting time {$time} from {$userTimezone} to UTC: " . $e->getMessage());
+                                return Carbon::parse($time)->format('Y-m-d H:i:s');
+                            }
                         })
                         ->toArray();
                 }

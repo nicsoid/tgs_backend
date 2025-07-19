@@ -475,4 +475,60 @@ class TelegramService
             return 0;
         }
     }
+
+    public function testBotConnection()
+    {
+        try {
+            $response = $this->client->get($this->apiUrl . '/getMe');
+            $data = json_decode($response->getBody(), true);
+            
+            Log::info('Bot connection test', [
+                'response' => $data,
+                'bot_token_configured' => !empty(config('services.telegram.bot_token'))
+            ]);
+            
+            return $data;
+        } catch (\Exception $e) {
+            Log::error('Bot connection test failed', [
+                'error' => $e->getMessage(),
+                'api_url' => $this->apiUrl
+            ]);
+            throw $e;
+        }
+    }
+
+    public function testSendToChat($chatId, $testMessage = "Test message from Telegram Scheduler")
+    {
+        try {
+            Log::info('Testing send to chat', [
+                'chat_id' => $chatId,
+                'message' => $testMessage
+            ]);
+
+            $response = $this->client->post($this->apiUrl . '/sendMessage', [
+                'json' => [
+                    'chat_id' => $chatId,
+                    'text' => $testMessage,
+                    'parse_mode' => 'HTML'
+                ]
+            ]);
+
+            $result = json_decode($response->getBody(), true);
+            
+            Log::info('Test message result', [
+                'chat_id' => $chatId,
+                'result' => $result
+            ]);
+
+            return $result;
+        } catch (\Exception $e) {
+            Log::error('Test send failed', [
+                'chat_id' => $chatId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
+    }
+
 }

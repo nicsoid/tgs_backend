@@ -70,5 +70,6 @@ class Kernel extends HttpKernel
         'jwt.auth' => \Tymon\JWTAuth\Http\Middleware\Authenticate::class,
         'jwt.refresh' => \Tymon\JWTAuth\Http\Middleware\RefreshToken::class,
         'verify.group.admin' => \App\Http\Middleware\VerifyGroupAdmin::class, // Add this line
+        'admin' => \App\Http\Middleware\AdminMiddleware::class,
     ];
 }

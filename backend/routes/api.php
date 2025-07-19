@@ -11,6 +11,7 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\StatisticsController;
 use App\Http\Controllers\CalendarController;
 
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -197,3 +198,5 @@ Route::get('/test-middleware', function() {
         return response()->json(['error' => $e->getMessage()]);
     }
 });
+
+require __DIR__.'/admin.php';

@@ -477,4 +477,5 @@ class ScheduledPostController extends Controller
             ]);
         }
     }
+    
 }
