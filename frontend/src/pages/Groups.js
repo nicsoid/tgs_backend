@@ -1,6 +1,6 @@
-// Updated Groups.js with enhanced admin verification handling
+// src/pages/Groups.js - Fixed Version
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import {
   UserGroupIcon,
@@ -8,14 +8,13 @@ import {
   TrashIcon,
   CheckIcon,
 } from "@heroicons/react/outline";
-import { ExclamationIcon } from "@heroicons/react/solid"; // Fixed import
+import { ExclamationIcon } from "@heroicons/react/solid";
 import { useTranslation } from "react-i18next";
 import UsageAlert from "../components/UsageAlert";
 
 const Groups = () => {
   const { t } = useTranslation();
   const [groups, setGroups] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [usage, setUsage] = useState(null);
   const [plan, setPlan] = useState(null);
@@ -26,26 +25,17 @@ const Groups = () => {
   const [verificationResults, setVerificationResults] = useState(null);
   const [adminStatuses, setAdminStatuses] = useState(new Map());
 
-  useEffect(() => {
-    fetchGroups();
-    fetchUsageStats();
-  }, []);
-
-  const fetchGroups = async () => {
+  const fetchGroups = useCallback(async () => {
     try {
       const response = await axios.get(
         `${process.env.REACT_APP_API_URL}/api/groups`
       );
 
-      // Handle both old format (array) and new format (object with groups property)
       let groupsData;
       let verificationResult = null;
 
       if (Array.isArray(response.data)) {
-        // Old format - just an array of groups
         groupsData = response.data;
-
-        // Check for verification results in headers
         const updatedCount = response.headers["x-verification-updated"];
         const removedCount = response.headers["x-verification-removed"];
         if (updatedCount || removedCount) {
@@ -55,11 +45,9 @@ const Groups = () => {
           };
         }
       } else if (response.data.groups) {
-        // New format - object with groups property
         groupsData = response.data.groups;
         verificationResult = response.data.verification_result;
       } else {
-        // Fallback
         groupsData = response.data;
       }
 
@@ -69,7 +57,6 @@ const Groups = () => {
         setVerificationResults(verificationResult);
       }
 
-      // Initialize admin statuses - all fetched groups are considered verified
       const statusMap = new Map();
       groupsData.forEach((group) => {
         const groupId = group.id || group._id;
@@ -78,18 +65,15 @@ const Groups = () => {
       setAdminStatuses(statusMap);
     } catch (error) {
       console.error("Failed to fetch groups:", error);
-      // Show user-friendly error if admin access was revoked
       if (error.response?.status === 403) {
         alert(
           "Some groups have been removed because you're no longer an admin in them."
         );
       }
-    } finally {
-      setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchUsageStats = async () => {
+  const fetchUsageStats = useCallback(async () => {
     try {
       const response = await axios.get(
         `${process.env.REACT_APP_API_URL}/api/scheduled-posts/usage/stats`
@@ -99,7 +83,12 @@ const Groups = () => {
     } catch (error) {
       console.error("Failed to fetch usage stats:", error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchGroups();
+    fetchUsageStats();
+  }, [fetchGroups, fetchUsageStats]);
 
   const syncGroups = async () => {
     setSyncing(true);
@@ -108,7 +97,6 @@ const Groups = () => {
         `${process.env.REACT_APP_API_URL}/api/groups/sync`
       );
 
-      // Handle enhanced sync response
       if (response.data.verification_result) {
         setVerificationResults(response.data.verification_result);
 
@@ -189,9 +177,6 @@ const Groups = () => {
         `${process.env.REACT_APP_API_URL}/api/groups/${groupId}/check-admin`
       );
 
-      console.log("Enhanced admin check response:", response.data);
-
-      // Update admin status in local state
       setAdminStatuses((prev) => {
         const newMap = new Map(prev);
         newMap.set(groupId, {
@@ -211,11 +196,9 @@ const Groups = () => {
           alert(t("admin_status_verified"));
         }
 
-        // Refresh the groups list if status changed
         await fetchGroups();
         await fetchUsageStats();
       } else {
-        // User is no longer admin - remove from local state
         setGroups((prevGroups) =>
           prevGroups.filter((g) => (g.id || g._id) !== groupId)
         );
@@ -223,7 +206,7 @@ const Groups = () => {
           t("not_admin_in_group") +
             " The group has been removed from your list."
         );
-        await fetchUsageStats(); // Update usage stats
+        await fetchUsageStats();
       }
     } catch (error) {
       console.error("Failed to check admin status:", error);
@@ -232,7 +215,6 @@ const Groups = () => {
 
       if (error.response?.status === 403) {
         errorMessage = error.response.data.message;
-        // If it's an authorization error, the user is no longer admin
         setGroups((prevGroups) =>
           prevGroups.filter((g) => (g.id || g._id) !== groupId)
         );
@@ -265,7 +247,6 @@ const Groups = () => {
         `${process.env.REACT_APP_API_URL}/api/groups/${groupId}`
       );
 
-      // Remove from local state
       setGroups((prevGroups) =>
         prevGroups.filter((g) => (g.id || g._id) !== groupId)
       );
@@ -293,19 +274,10 @@ const Groups = () => {
     return verifyingGroupId === groupId;
   };
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       {usage && plan && <UsageAlert usage={usage} plan={plan} />}
 
-      {/* Show verification results if available */}
       {verificationResults &&
         (verificationResults.updated > 0 ||
           verificationResults.removed > 0) && (

@@ -1,4 +1,4 @@
-// src/pages/Help.js - Comprehensive App Usage Guide
+// src/pages/Help.js - Fixed Scroll Issue
 
 import React, { useState } from "react";
 import {
@@ -14,12 +14,13 @@ import {
   PlayIcon,
   CheckCircleIcon,
 } from "@heroicons/react/outline";
-import { ExclamationIcon, LightBulbIcon } from "@heroicons/react/solid"; // Fixed imports
+import { ExclamationIcon, LightBulbIcon } from "@heroicons/react/solid";
 
 const Help = () => {
   const [expandedSections, setExpandedSections] = useState({});
 
-  const toggleSection = (sectionId) => {
+  const toggleSection = (sectionId, event) => {
+    event.preventDefault(); // Prevent default button behavior
     setExpandedSections((prev) => ({
       ...prev,
       [sectionId]: !prev[sectionId],
@@ -38,8 +39,9 @@ const Help = () => {
     return (
       <div className="border border-gray-200 rounded-lg mb-4">
         <button
-          onClick={() => toggleSection(id)}
-          className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 rounded-t-lg transition-colors"
+          type="button"
+          onClick={(e) => toggleSection(id, e)}
+          className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 rounded-t-lg transition-colors text-left focus:outline-none focus:ring-2 focus:ring-indigo-500"
         >
           <div className="flex items-center">
             <Icon className="h-5 w-5 text-indigo-600 mr-3" />
@@ -813,6 +815,7 @@ const Help = () => {
         <p>
           Need more help? Contact our support team or visit our documentation at{" "}
           <button
+            type="button"
             onClick={() => window.open("https://docs.example.com", "_blank")}
             className="text-indigo-600 hover:text-indigo-800 underline"
           >

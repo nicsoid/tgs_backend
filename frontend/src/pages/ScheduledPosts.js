@@ -1,6 +1,6 @@
-// src/pages/ScheduledPosts.js
+// src/pages/ScheduledPosts.js - Fixed Version
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import axios from "axios";
 import { format } from "date-fns";
@@ -18,15 +18,10 @@ import { useTranslation } from "react-i18next";
 const ScheduledPosts = () => {
   const { t } = useTranslation();
   const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
-  useEffect(() => {
-    fetchPosts();
-  }, [page]);
-
-  const fetchPosts = async () => {
+  const fetchPosts = useCallback(async () => {
     try {
       const response = await axios.get(
         `${process.env.REACT_APP_API_URL}/api/scheduled-posts?page=${page}`
@@ -35,10 +30,12 @@ const ScheduledPosts = () => {
       setTotalPages(response.data.last_page);
     } catch (error) {
       console.error("Failed to fetch posts:", error);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [page]);
+
+  useEffect(() => {
+    fetchPosts();
+  }, [fetchPosts]);
 
   const deletePost = async (post) => {
     const postId = post.id || post._id;
@@ -86,12 +83,10 @@ const ScheduledPosts = () => {
   };
 
   const renderGroupsList = (post) => {
-    // Handle both old single group format and new multiple groups format
     const groups = post.groups_data || post.groups || [];
     const groupIds = post.group_ids || (post.group_id ? [post.group_id] : []);
 
     if (groups.length === 0 && post.group) {
-      // Fallback to old format
       return (
         <span className="text-sm font-medium text-indigo-600">
           {post.group.title}
@@ -129,14 +124,6 @@ const ScheduledPosts = () => {
       </span>
     );
   };
-
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">

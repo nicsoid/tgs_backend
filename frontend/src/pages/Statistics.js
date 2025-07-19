@@ -1,6 +1,6 @@
-// src/pages/Statistics.js - Improved Group Statistics
+// src/pages/Statistics.js - Fixed Version
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import axios from "axios";
 import {
@@ -8,9 +8,6 @@ import {
   Line,
   BarChart,
   Bar,
-  PieChart,
-  Pie,
-  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -22,24 +19,16 @@ import {
   CurrencyDollarIcon,
   ChartBarIcon,
   UserGroupIcon,
-  ExclamationTriangleIcon,
 } from "@heroicons/react/outline";
+import { ExclamationIcon } from "@heroicons/react/solid";
 
 const Statistics = () => {
   const { t } = useTranslation();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [selectedPost, setSelectedPost] = useState(null);
-  const [postDetails, setPostDetails] = useState(null);
   const [error, setError] = useState(null);
 
-  const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8"];
-
-  useEffect(() => {
-    fetchStatistics();
-  }, []);
-
-  const fetchStatistics = async () => {
+  const fetchStatistics = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -53,19 +42,11 @@ const Statistics = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchPostDetails = async (postId) => {
-    try {
-      const response = await axios.get(
-        `${process.env.REACT_APP_API_URL}/api/statistics/post/${postId}`
-      );
-      setPostDetails(response.data);
-      setSelectedPost(postId);
-    } catch (error) {
-      console.error("Failed to fetch post details:", error);
-    }
-  };
+  useEffect(() => {
+    fetchStatistics();
+  }, [fetchStatistics]);
 
   if (loading) {
     return (
@@ -80,7 +61,7 @@ const Statistics = () => {
       <div className="rounded-md bg-red-50 p-4">
         <div className="flex">
           <div className="flex-shrink-0">
-            <ExclamationTriangleIcon className="h-5 w-5 text-red-400" />
+            <ExclamationIcon className="h-5 w-5 text-red-400" />
           </div>
           <div className="ml-3">
             <h3 className="text-sm font-medium text-red-800">Error</h3>
@@ -342,102 +323,6 @@ const Statistics = () => {
           </div>
         )}
       </div>
-
-      {/* Post Details Modal */}
-      {postDetails && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
-              {t("post_details")}
-            </h3>
-
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm text-gray-500">{t("content")}</p>
-                <p className="text-sm text-gray-900">
-                  {postDetails.post.content.text}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-gray-500">{t("advertiser")}</p>
-                  <p className="text-sm text-gray-900">
-                    @{postDetails.statistics.advertiser.telegram_username}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">{t("amount_paid")}</p>
-                  <p className="text-sm text-gray-900">
-                    {postDetails.statistics.advertiser.currency}{" "}
-                    {postDetails.statistics.advertiser.amount_paid}
-                  </p>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm text-gray-500 mb-2">
-                  {t("send_history")}
-                </p>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                          {t("scheduled_time")}
-                        </th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                          {t("sent_at")}
-                        </th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                          {t("status")}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {postDetails.logs.map((log) => (
-                        <tr key={log._id}>
-                          <td className="px-4 py-2 text-sm text-gray-900">
-                            {new Date(log.scheduled_time).toLocaleString()}
-                          </td>
-                          <td className="px-4 py-2 text-sm text-gray-900">
-                            {log.sent_at
-                              ? new Date(log.sent_at).toLocaleString()
-                              : "-"}
-                          </td>
-                          <td className="px-4 py-2 text-sm">
-                            <span
-                              className={`inline-flex px-2 py-1 text-xs rounded-full ${
-                                log.status === "sent"
-                                  ? "bg-green-100 text-green-800"
-                                  : "bg-red-100 text-red-800"
-                              }`}
-                            >
-                              {log.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end">
-              <button
-                onClick={() => {
-                  setSelectedPost(null);
-                  setPostDetails(null);
-                }}
-                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                {t("close")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

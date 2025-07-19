@@ -1,6 +1,6 @@
-// src/pages/Calendar.js - Complete Fixed Version
+// src/pages/Calendar.js - Simple Fixed Version
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import FullCalendar from "@fullcalendar/react";
@@ -20,24 +20,10 @@ const Calendar = () => {
   const [groups, setGroups] = useState([]);
   const [showAvailableSlots, setShowAvailableSlots] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const calendarRef = useRef(null);
 
   useEffect(() => {
     fetchGroups();
   }, []);
-
-  // Trigger calendar data fetch when group selection changes
-  useEffect(() => {
-    if (groups.length > 0) {
-      // Get current date range from calendar if available
-      if (calendarRef.current) {
-        const calendarApi = calendarRef.current.getApi();
-        const view = calendarApi.view;
-        fetchCalendarData(view.activeStart, view.activeEnd);
-      }
-    }
-  }, [selectedGroup, groups.length]);
 
   const fetchGroups = async () => {
     try {
@@ -51,9 +37,6 @@ const Calendar = () => {
   };
 
   const fetchCalendarData = async (start, end) => {
-    if (loading) return; // Prevent multiple simultaneous requests
-
-    setLoading(true);
     try {
       const params = {
         start_date: start.toISOString().split("T")[0],
@@ -64,8 +47,6 @@ const Calendar = () => {
         params.group_id = selectedGroup;
       }
 
-      console.log("Fetching calendar data with params:", params);
-
       const response = await axios.get(
         `${process.env.REACT_APP_API_URL}/api/calendar`,
         { params }
@@ -73,18 +54,10 @@ const Calendar = () => {
 
       setEvents(response.data.events || []);
       setAvailableSlots(response.data.available_slots || []);
-
-      console.log("Calendar data fetched:", {
-        events: response.data.events?.length || 0,
-        availableSlots: response.data.available_slots?.length || 0,
-        selectedGroup,
-      });
     } catch (error) {
       console.error("Failed to fetch calendar data:", error);
       setEvents([]);
       setAvailableSlots([]);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -95,7 +68,6 @@ const Calendar = () => {
   const handleEventClick = (clickInfo) => {
     // Don't show modal for available slots
     if (clickInfo.event.extendedProps?.isAvailableSlot) {
-      console.log("Clicked on available slot - not showing modal");
       return;
     }
 
@@ -105,22 +77,11 @@ const Calendar = () => {
       Object.keys(clickInfo.event.extendedProps).length > 0
     ) {
       setSelectedEvent(clickInfo.event.extendedProps);
-    } else {
-      console.warn(
-        "Event clicked but no extended props found:",
-        clickInfo.event
-      );
     }
   };
 
   const handleGroupChange = (e) => {
-    const newGroupId = e.target.value;
-    console.log("Group selection changed:", newGroupId);
-    setSelectedGroup(newGroupId);
-
-    // Clear existing data while loading new data
-    setEvents([]);
-    setAvailableSlots([]);
+    setSelectedGroup(e.target.value);
   };
 
   const renderEventContent = (eventInfo) => {
@@ -167,6 +128,9 @@ const Calendar = () => {
     );
   };
 
+  // Determine if we're on mobile for responsive settings
+  const isMobile = window.innerWidth < 768;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
@@ -180,8 +144,7 @@ const Calendar = () => {
           <select
             value={selectedGroup}
             onChange={handleGroupChange}
-            disabled={loading}
-            className="w-full sm:w-auto min-w-0 sm:min-w-[200px] px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm disabled:opacity-50"
+            className="w-full sm:w-auto min-w-0 sm:min-w-[200px] px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
           >
             <option value="">{t("all_groups")}</option>
             {groups.map((group) => (
@@ -197,8 +160,7 @@ const Calendar = () => {
               type="checkbox"
               checked={showAvailableSlots}
               onChange={(e) => setShowAvailableSlots(e.target.checked)}
-              disabled={loading}
-              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50"
+              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
             />
             <span className="ml-2 text-sm text-gray-700">
               {t("show_available_slots")}
@@ -212,22 +174,16 @@ const Calendar = () => {
         </div>
       </div>
 
-      {loading && (
-        <div className="flex justify-center items-center py-4">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600"></div>
-          <span className="ml-2 text-sm text-gray-600">Loading...</span>
-        </div>
-      )}
-
       <div className="bg-white shadow rounded-lg p-3 sm:p-6">
         <FullCalendar
-          ref={calendarRef}
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
+          initialView={isMobile ? "timeGridDay" : "timeGridWeek"}
           headerToolbar={{
-            left: "prev,next today",
+            left: isMobile ? "prev,next" : "prev,next today",
             center: "title",
-            right: "dayGridMonth,timeGridWeek,timeGridDay",
+            right: isMobile
+              ? "timeGridDay"
+              : "dayGridMonth,timeGridWeek,timeGridDay",
           }}
           events={calendarEvents}
           eventClick={handleEventClick}
@@ -261,20 +217,9 @@ const Calendar = () => {
           // Week starts on Monday
           firstDay={1}
           // Better mobile responsiveness
-          aspectRatio={window.innerWidth < 768 ? 0.8 : 1.35}
+          aspectRatio={isMobile ? 0.8 : 1.35}
           // Show events at their exact time without extending duration
           eventDisplay="block"
-          // Responsive toolbar for mobile
-          headerToolbar={{
-            left: window.innerWidth < 768 ? "prev,next" : "prev,next today",
-            center: "title",
-            right:
-              window.innerWidth < 768
-                ? "timeGridDay"
-                : "dayGridMonth,timeGridWeek,timeGridDay",
-          }}
-          // Loading state
-          loading={loading}
         />
       </div>
 
