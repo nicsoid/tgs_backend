@@ -54,3 +54,4 @@ quick-fix.sh
 docker-compose.yml.backup-20250722_182857
 CyberPanel_deploy.txt
 docker-compose.dev.yml
+docker-compose.yml
