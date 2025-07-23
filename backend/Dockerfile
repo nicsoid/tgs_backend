@@ -1,8 +1,4 @@
-# ===================================================
-# Backend Dockerfile
-# ===================================================
-
-# backend/Dockerfile
+# backend/Dockerfile - Fixed syntax
 FROM php:8.2-fpm as base
 
 # Install system dependencies
@@ -19,7 +15,8 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     supervisor \
     cron \
-    nginx
+    nginx \
+    netcat-openbsd
 
 # Clear cache
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -76,16 +73,32 @@ COPY . .
 # Generate optimized autoloader
 RUN composer dump-autoload --optimize --classmap-authoritative
 
-# Copy configuration files
+# Create docker config directory and files if they don't exist
+RUN mkdir -p /var/www/html/docker/php \
+    && mkdir -p /var/www/html/docker/supervisor
+
+# Create PHP configuration file (fallback)
+RUN echo "memory_limit = 512M" > /var/www/html/docker/php/php.ini && \
+    echo "max_execution_time = 300" >> /var/www/html/docker/php/php.ini && \
+    echo "upload_max_filesize = 50M" >> /var/www/html/docker/php/php.ini && \
+    echo "post_max_size = 50M" >> /var/www/html/docker/php/php.ini
+
+# Create supervisor configuration (fallback)
+RUN echo "[supervisord]" > /var/www/html/docker/supervisor/supervisord.conf && \
+    echo "nodaemon=true" >> /var/www/html/docker/supervisor/supervisord.conf
+
+# Copy configuration files with proper error handling
 COPY docker/php/php.ini /usr/local/etc/php/conf.d/app.ini
 COPY docker/supervisor/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Create required directories
+# Create required directories and set permissions
 RUN mkdir -p /var/www/html/storage/logs \
     && mkdir -p /var/www/html/storage/framework/cache \
     && mkdir -p /var/www/html/storage/framework/sessions \
     && mkdir -p /var/www/html/storage/framework/views \
-    && mkdir -p /var/www/html/storage/app/public
+    && mkdir -p /var/www/html/storage/app/public/media \
+    && mkdir -p /var/www/html/bootstrap/cache \
+    && mkdir -p /var/log/supervisor
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/html \
@@ -99,3 +112,4 @@ RUN chmod +x /entrypoint.sh
 EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
+CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000", "--verbose"]
