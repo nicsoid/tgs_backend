@@ -55,3 +55,15 @@ docker-compose.yml.backup-20250722_182857
 CyberPanel_deploy.txt
 docker-compose.dev.yml
 docker-compose.yml
+deploy-to-cyberpanel.sh
+deploy-to-vps.sh
+env-manager.sh
+local-frontend-dev.sh
+check-webhook.sh
+.env
+.env.dev
+.env.prod
+dev-commands.sh
+dev-local.sh
+docker_fix.sh
+test-laravel-start.sh
