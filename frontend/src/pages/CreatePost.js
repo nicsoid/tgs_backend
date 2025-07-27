@@ -1,4 +1,4 @@
-// src/pages/CreatePost.js
+// src/pages/CreatePost.js - Updated to remove future time restriction
 
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -119,26 +119,6 @@ const CreatePost = () => {
   };
 
   const addScheduleTime = () => {
-    // Check if adding another schedule time would exceed limits
-    if (usage && plan) {
-      const currentMessageCount = usage.messages.used;
-      const scheduledCount = formData.schedule_times.filter(
-        (time) => time
-      ).length;
-      const groupsCount = formData.group_ids.length;
-      const totalAfterAdd =
-        currentMessageCount + (scheduledCount + 1) * groupsCount;
-
-      if (totalAfterAdd > plan.limits.messages_per_month) {
-        alert(
-          t("message_limit_would_exceed", {
-            remaining: plan.limits.messages_per_month - currentMessageCount,
-          })
-        );
-        return;
-      }
-    }
-
     setFormData((prev) => ({
       ...prev,
       schedule_times: [...prev.schedule_times, ""],
@@ -173,6 +153,18 @@ const CreatePost = () => {
     return validScheduleTimes.length * formData.group_ids.length;
   };
 
+  const isTimeInPast = (timeString) => {
+    if (!timeString) return false;
+    const timeDate = new Date(timeString);
+    const now = new Date();
+    return timeDate < now;
+  };
+
+  const getFutureTimesCount = () => {
+    return formData.schedule_times.filter((time) => time && !isTimeInPast(time))
+      .length;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
@@ -186,7 +178,7 @@ const CreatePost = () => {
 
     formDataToSend.append("text", formData.text);
 
-    // Filter out empty schedule times
+    // Filter out empty schedule times but allow past times
     const validScheduleTimes = formData.schedule_times.filter((time) => time);
     validScheduleTimes.forEach((time, index) => {
       formDataToSend.append(`schedule_times[${index}]`, time);
@@ -242,12 +234,6 @@ const CreatePost = () => {
     return plan.limits.messages_per_month - usage.messages.used;
   };
 
-  const getMinDateTime = () => {
-    const now = new Date();
-    now.setMinutes(now.getMinutes() + 5); // Minimum 5 minutes from now
-    return now.toISOString().slice(0, 16);
-  };
-
   return (
     <div className="max-w-3xl mx-auto">
       {usage && plan && <UsageAlert usage={usage} plan={plan} />}
@@ -265,11 +251,24 @@ const CreatePost = () => {
         )}
         {formData.group_ids.length > 0 &&
           formData.schedule_times.filter((t) => t).length > 0 && (
-            <p className="text-sm text-blue-600 mt-1">
-              This will send {getTotalMessages()} messages (
-              {formData.group_ids.length} groups ×{" "}
-              {formData.schedule_times.filter((t) => t).length} times)
-            </p>
+            <div className="mt-2 space-y-1">
+              <p className="text-sm text-blue-600">
+                This will send {getTotalMessages()} messages total (
+                {formData.group_ids.length} groups ×{" "}
+                {formData.schedule_times.filter((t) => t).length} times)
+              </p>
+              {getFutureTimesCount() !==
+                formData.schedule_times.filter((t) => t).length && (
+                <p className="text-sm text-amber-600">
+                  {getFutureTimesCount()} future times will be queued,{" "}
+                  {
+                    formData.schedule_times.filter((t) => t && isTimeInPast(t))
+                      .length
+                  }{" "}
+                  past times will be ignored
+                </p>
+              )}
+            </div>
           )}
       </div>
 
@@ -375,37 +374,46 @@ const CreatePost = () => {
           <label className="block text-sm font-medium text-gray-700 mb-2">
             {t("schedule_times")}
           </label>
-          {formData.schedule_times.map((time, index) => (
-            <div key={index} className="flex items-center mb-2">
-              <input
-                type="datetime-local"
-                value={time}
-                onChange={(e) =>
-                  handleScheduleTimeChange(index, e.target.value)
-                }
-                required
-                min={getMinDateTime()}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-              />
-              {formData.schedule_times.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeScheduleTime(index)}
-                  className="ml-2 inline-flex items-center p-1 border border-transparent rounded-full text-red-600 hover:bg-red-50"
-                >
-                  <XIcon className="h-5 w-5" />
-                </button>
-              )}
-            </div>
-          ))}
+          <p className="text-sm text-gray-500 mb-3">
+            You can schedule for any time. Past times won't send messages,
+            future times will be queued automatically.
+          </p>
+          {formData.schedule_times.map((time, index) => {
+            const isPast = isTimeInPast(time);
+            return (
+              <div key={index} className="flex items-center mb-2">
+                <input
+                  type="datetime-local"
+                  value={time}
+                  onChange={(e) =>
+                    handleScheduleTimeChange(index, e.target.value)
+                  }
+                  required
+                  className={`flex-1 px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm ${
+                    isPast ? "border-amber-300 bg-amber-50" : "border-gray-300"
+                  }`}
+                />
+                {isPast && time && (
+                  <span className="ml-2 text-xs text-amber-600 bg-amber-100 px-2 py-1 rounded">
+                    Past
+                  </span>
+                )}
+                {formData.schedule_times.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeScheduleTime(index)}
+                    className="ml-2 inline-flex items-center p-1 border border-transparent rounded-full text-red-600 hover:bg-red-50"
+                  >
+                    <XIcon className="h-5 w-5" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
           <button
             type="button"
             onClick={addScheduleTime}
-            disabled={
-              getRemainingMessages() !== null &&
-              getTotalMessages() >= getRemainingMessages()
-            }
-            className="mt-2 inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="mt-2 inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           >
             <CalendarIcon className="mr-1 h-4 w-4" />
             {t("add_another_time")}
@@ -562,8 +570,7 @@ const CreatePost = () => {
             disabled={
               submitting ||
               formData.group_ids.length === 0 ||
-              getRemainingMessages() === 0 ||
-              getTotalMessages() > (getRemainingMessages() || 0)
+              formData.schedule_times.filter((t) => t).length === 0
             }
             className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >

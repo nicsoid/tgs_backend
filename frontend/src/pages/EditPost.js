@@ -1,4 +1,4 @@
-// src/pages/EditPost.js
+// src/pages/EditPost.js - Always Editable Version
 
 import React, { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -10,6 +10,7 @@ import {
   XIcon,
   TrashIcon,
   CheckIcon,
+  ClockIcon,
 } from "@heroicons/react/outline";
 import { format } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -197,12 +198,6 @@ const EditPost = () => {
       ? media.url
       : `${process.env.REACT_APP_API_URL}${media.url}`;
 
-    console.log("Media preview:", {
-      original_url: media.url,
-      full_url: mediaUrl,
-      type: media.type,
-    });
-
     return (
       <div className="relative">
         {isVideo ? (
@@ -238,6 +233,29 @@ const EditPost = () => {
     );
   };
 
+  const isTimeInPast = (timeString) => {
+    if (!timeString) return false;
+    const timeDate = new Date(timeString);
+    const now = new Date();
+    return timeDate < now;
+  };
+
+  const getTimeStatus = (timeString) => {
+    if (!timeString) return null;
+
+    if (isTimeInPast(timeString)) {
+      // Check if this time was already sent
+      const sentTimes = post?.sent_times || {};
+      const wasSent = Object.keys(sentTimes).some((sentTime) => {
+        return new Date(sentTime).getTime() === new Date(timeString).getTime();
+      });
+
+      return wasSent ? "sent" : "past";
+    }
+
+    return "future";
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
@@ -251,7 +269,7 @@ const EditPost = () => {
 
     formDataToSend.append("text", formData.text);
 
-    // Add schedule times
+    // Add schedule times (including past ones - backend will handle them)
     const validScheduleTimes = formData.schedule_times.filter((time) => time);
     validScheduleTimes.forEach((time, index) => {
       formDataToSend.append(`schedule_times[${index}]`, time);
@@ -273,7 +291,6 @@ const EditPost = () => {
     });
 
     try {
-      // Use the special update route for media handling
       await axios.post(
         `${process.env.REACT_APP_API_URL}/api/scheduled-posts/${postId}/update-with-media`,
         formDataToSend,
@@ -303,12 +320,6 @@ const EditPost = () => {
     }
   };
 
-  const getMinDateTime = () => {
-    const now = new Date();
-    now.setMinutes(now.getMinutes() + 5);
-    return now.toISOString().slice(0, 16);
-  };
-
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -325,28 +336,6 @@ const EditPost = () => {
     );
   }
 
-  // Don't allow editing if post has started sending
-  if (post.status !== "pending") {
-    return (
-      <div className="max-w-3xl mx-auto">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
-          <h3 className="text-sm font-medium text-yellow-800">
-            {t("cannot_edit_post")}
-          </h3>
-          <p className="mt-1 text-sm text-yellow-700">
-            {t("cannot_edit_post_description")}
-          </p>
-          <button
-            onClick={() => navigate("/posts")}
-            className="mt-2 text-sm font-medium text-yellow-800 hover:text-yellow-900"
-          >
-            ← {t("back_to_posts")}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-3xl mx-auto">
       <div className="mb-6">
@@ -356,6 +345,16 @@ const EditPost = () => {
         <p className="text-sm text-gray-500 mt-1">
           {t("editing_post_for")} {formData.group_ids.length} group(s)
         </p>
+        <div className="mt-2 text-sm text-blue-600">
+          <p>
+            Posts are always editable. You can add, remove, or modify schedule
+            times anytime.
+          </p>
+          <p>
+            Past times will not send messages, future times will be queued
+            automatically.
+          </p>
+        </div>
       </div>
 
       <form
@@ -436,29 +435,60 @@ const EditPost = () => {
           <label className="block text-sm font-medium text-gray-700 mb-2">
             {t("schedule_times")}
           </label>
-          {formData.schedule_times.map((time, index) => (
-            <div key={index} className="flex items-center mb-2">
-              <input
-                type="datetime-local"
-                value={time}
-                onChange={(e) =>
-                  handleScheduleTimeChange(index, e.target.value)
-                }
-                required
-                min={getMinDateTime()}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-              />
-              {formData.schedule_times.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeScheduleTime(index)}
-                  className="ml-2 inline-flex items-center p-1 border border-transparent rounded-full text-red-600 hover:bg-red-50"
-                >
-                  <XIcon className="h-5 w-5" />
-                </button>
-              )}
-            </div>
-          ))}
+          <p className="text-sm text-gray-500 mb-3">
+            You can add times in the past or future. Past times won't send,
+            future times will be queued.
+          </p>
+          {formData.schedule_times.map((time, index) => {
+            const timeStatus = getTimeStatus(time);
+            return (
+              <div key={index} className="flex items-center mb-2">
+                <input
+                  type="datetime-local"
+                  value={time}
+                  onChange={(e) =>
+                    handleScheduleTimeChange(index, e.target.value)
+                  }
+                  required
+                  className={`flex-1 px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm ${
+                    timeStatus === "past"
+                      ? "border-red-300 bg-red-50"
+                      : timeStatus === "sent"
+                      ? "border-green-300 bg-green-50"
+                      : "border-gray-300"
+                  }`}
+                />
+                <div className="ml-2 flex items-center">
+                  {timeStatus === "past" && (
+                    <span className="text-xs text-red-600 bg-red-100 px-2 py-1 rounded">
+                      Past
+                    </span>
+                  )}
+                  {timeStatus === "sent" && (
+                    <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded flex items-center">
+                      <CheckIcon className="h-3 w-3 mr-1" />
+                      Sent
+                    </span>
+                  )}
+                  {timeStatus === "future" && (
+                    <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded flex items-center">
+                      <ClockIcon className="h-3 w-3 mr-1" />
+                      Queued
+                    </span>
+                  )}
+                </div>
+                {formData.schedule_times.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeScheduleTime(index)}
+                    className="ml-2 inline-flex items-center p-1 border border-transparent rounded-full text-red-600 hover:bg-red-50"
+                  >
+                    <XIcon className="h-5 w-5" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
           <button
             type="button"
             onClick={addScheduleTime}
@@ -668,32 +698,6 @@ const EditPost = () => {
             </div>
           </div>
         </div>
-
-        {/* Debug section - only show in development */}
-        {process.env.NODE_ENV === "development" && post && (
-          <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-            <h4 className="text-sm font-medium text-gray-700 mb-2">
-              Debug Info
-            </h4>
-            <pre className="text-xs text-gray-600">
-              {JSON.stringify(
-                {
-                  postId: post.id || post._id,
-                  groupIds: formData.group_ids,
-                  mediaCount: existingMedia.length,
-                  apiUrl: process.env.REACT_APP_API_URL,
-                  media: existingMedia.map((m) => ({
-                    type: m.type,
-                    url: m.url,
-                    path: m.path || "no path",
-                  })),
-                },
-                null,
-                2
-              )}
-            </pre>
-          </div>
-        )}
 
         {/* Submit Buttons */}
         <div className="flex justify-end space-x-3">

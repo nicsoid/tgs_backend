@@ -15,45 +15,98 @@ class StatisticsController extends Controller
 {
     public function index(Request $request)
     {
-        $user = $request->user();
-        $timezone = $user->getTimezone();
-        
-        // Overall statistics
-        $totalPosts = $user->scheduledPosts()->count();
-        $totalSent = PostLog::whereHas('post', function($q) use ($user) {
-            $q->where('user_id', $user->id);
-        })->where('status', 'sent')->count();
-        
-        $totalRevenue = $user->scheduledPosts()
-            ->get()
-            ->sum(function($post) use ($user) {
-                return $this->convertCurrency(
-                    $post->advertiser['amount_paid'],
-                    $post->advertiser['currency'],
-                    $user->getCurrency()
-                );
-            });
-        
-        // Monthly statistics
-        $monthlyStats = $this->getMonthlyStats($user, $timezone);
-        
-        // Top advertisers
-        $topAdvertisers = $this->getTopAdvertisers($user);
-        
-        // Group statistics - Fixed implementation
-        $groupStats = $this->getGroupStats($user);
-        
-        return response()->json([
-            'overall' => [
-                'total_posts' => $totalPosts,
-                'total_sent' => $totalSent,
-                'total_revenue' => $totalRevenue,
-                'currency' => $user->getCurrency()
-            ],
-            'monthly' => $monthlyStats,
-            'top_advertisers' => $topAdvertisers,
-            'group_stats' => $groupStats
-        ]);
+        try {
+            $user = $request->user();
+            $timezone = $user->getTimezone();
+            
+            // Overall statistics with error handling
+            $totalPosts = 0;
+            $totalSent = 0;
+            $totalRevenue = 0;
+            
+            try {
+                $totalPosts = $user->scheduledPosts()->count();
+            } catch (\Exception $e) {
+                \Log::warning('Error counting posts', ['error' => $e->getMessage()]);
+            }
+            
+            try {
+                $totalSent = \App\Models\PostLog::whereHas('post', function($q) use ($user) {
+                    $q->where('user_id', $user->id);
+                })->where('status', 'sent')->count();
+            } catch (\Exception $e) {
+                \Log::warning('Error counting sent messages', ['error' => $e->getMessage()]);
+            }
+            
+            try {
+                $totalRevenue = $user->scheduledPosts()
+                    ->get()
+                    ->sum(function($post) use ($user) {
+                        return $this->convertCurrency(
+                            $post->advertiser['amount_paid'] ?? 0,
+                            $post->advertiser['currency'] ?? 'USD',
+                            $user->getCurrency()
+                        );
+                    });
+            } catch (\Exception $e) {
+                \Log::warning('Error calculating revenue', ['error' => $e->getMessage()]);
+            }
+            
+            // Monthly statistics (simplified)
+            $monthlyStats = [];
+            try {
+                $monthlyStats = $this->getMonthlyStats($user, $timezone);
+            } catch (\Exception $e) {
+                \Log::warning('Error getting monthly stats', ['error' => $e->getMessage()]);
+            }
+            
+            // Top advertisers (simplified)
+            $topAdvertisers = [];
+            try {
+                $topAdvertisers = $this->getTopAdvertisers($user);
+            } catch (\Exception $e) {
+                \Log::warning('Error getting top advertisers', ['error' => $e->getMessage()]);
+            }
+            
+            // Group statistics (simplified)
+            $groupStats = [];
+            try {
+                $groupStats = $this->getGroupStats($user);
+            } catch (\Exception $e) {
+                \Log::warning('Error getting group stats', ['error' => $e->getMessage()]);
+            }
+            
+            return response()->json([
+                'overall' => [
+                    'total_posts' => $totalPosts,
+                    'total_sent' => $totalSent,
+                    'total_revenue' => $totalRevenue,
+                    'currency' => $user->getCurrency()
+                ],
+                'monthly' => $monthlyStats,
+                'top_advertisers' => $topAdvertisers,
+                'group_stats' => $groupStats
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Statistics endpoint error', [
+                'user_id' => $request->user()->id ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            // Return minimal fallback data
+            return response()->json([
+                'overall' => [
+                    'total_posts' => 0,
+                    'total_sent' => 0,
+                    'total_revenue' => 0,
+                    'currency' => 'USD'
+                ],
+                'monthly' => [],
+                'top_advertisers' => [],
+                'group_stats' => []
+            ]);
+        }
     }
     
     public function postDetails(Request $request, $postId)
@@ -271,4 +324,52 @@ class StatisticsController extends Controller
             return $amount;
         }
     }
+
+
+    public function getDashboardStats(Request $request)
+    {
+        try {
+            $user = $request->user();
+            
+            // Get user's posts
+            $totalPosts = $user->scheduledPosts()->count();
+            
+            // Get sent messages count
+            $totalSent = \App\Models\PostLog::whereHas('post', function($q) use ($user) {
+                $q->where('user_id', $user->id);
+            })->where('status', 'sent')->count();
+            
+            // Calculate total revenue (simple sum for now)
+            $totalRevenue = $user->scheduledPosts()
+                ->get()
+                ->sum(function($post) {
+                    return $post->advertiser['amount_paid'] ?? 0;
+                });
+            
+            return response()->json([
+                'overall' => [
+                    'total_posts' => $totalPosts,
+                    'total_sent' => $totalSent,
+                    'total_revenue' => $totalRevenue,
+                    'currency' => $user->getCurrency()
+                ]
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error getting dashboard stats', [
+                'user_id' => $request->user()->id ?? 'unknown',
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'overall' => [
+                    'total_posts' => 0,
+                    'total_sent' => 0,
+                    'total_revenue' => 0,
+                    'currency' => 'USD'
+                ]
+            ]);
+        }
+    }
+
+
 }

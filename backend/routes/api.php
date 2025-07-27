@@ -199,4 +199,148 @@ Route::get('/test-middleware', function() {
     }
 });
 
+
+
+// Dashboard specific routes
+Route::middleware('auth:api')->group(function () {
+    // Dashboard stats (simplified)
+    Route::get('/dashboard/stats', function(Request $request) {
+        try {
+            $user = $request->user();
+            
+            // Get basic counts
+            $totalPosts = $user->scheduledPosts()->count();
+            $totalSent = \App\Models\PostLog::whereHas('post', function($q) use ($user) {
+                $q->where('user_id', $user->id);
+            })->where('status', 'sent')->count();
+            
+            // Get user's admin groups count
+            $groupsCount = \DB::connection('mongodb')
+                ->table('user_groups')
+                ->where('user_id', $user->id)
+                ->where('is_admin', true)
+                ->count();
+            
+            // Simple revenue calculation
+            $totalRevenue = $user->scheduledPosts()
+                ->get()
+                ->sum(function($post) {
+                    return $post->advertiser['amount_paid'] ?? 0;
+                });
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'total_posts' => $totalPosts,
+                    'total_sent' => $totalSent,
+                    'total_revenue' => $totalRevenue,
+                    'currency' => $user->getCurrency(),
+                    'groups_count' => $groupsCount,
+                    'user_plan' => $user->subscription['plan'] ?? 'free'
+                ]
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Dashboard stats error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'data' => [
+                    'total_posts' => 0,
+                    'total_sent' => 0,
+                    'total_revenue' => 0,
+                    'currency' => 'USD',
+                    'groups_count' => 0,
+                    'user_plan' => 'free'
+                ]
+            ]);
+        }
+    });
+
+    // Simple posts endpoint for dashboard
+    Route::get('/dashboard/recent-posts', function(Request $request) {
+        try {
+            $user = $request->user();
+            
+            $posts = $user->scheduledPosts()
+                ->orderBy('created_at', 'desc')
+                ->limit(5)
+                ->get();
+            
+            // Add basic group info to each post
+            foreach ($posts as $post) {
+                if ($post->group_ids && count($post->group_ids) > 0) {
+                    $groups = \App\Models\Group::whereIn('_id', $post->group_ids)->get();
+                    $post->groups_data = $groups;
+                } else {
+                    $post->groups_data = collect();
+                }
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $posts
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Recent posts error', [
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'data' => []
+            ]);
+        }
+    });
+
+    // Test endpoint to check what's in the database
+    Route::get('/debug/user-data', function(Request $request) {
+        if (!app()->environment('local')) {
+            return response()->json(['error' => 'Debug endpoint only available in local environment'], 403);
+        }
+        
+        try {
+            $user = $request->user();
+            
+            $data = [
+                'user_info' => [
+                    'id' => $user->id,
+                    'name' => $user->first_name . ' ' . $user->last_name,
+                    'username' => $user->username,
+                    'subscription' => $user->subscription,
+                    'usage' => $user->usage,
+                    'settings' => $user->settings
+                ],
+                'posts_count' => $user->scheduledPosts()->count(),
+                'recent_posts' => $user->scheduledPosts()->orderBy('created_at', 'desc')->limit(3)->get(),
+                'user_groups' => \DB::connection('mongodb')
+                    ->table('user_groups')
+                    ->where('user_id', $user->id)
+                    ->get(),
+                'logs_count' => \App\Models\PostLog::whereHas('post', function($q) use ($user) {
+                    $q->where('user_id', $user->id);
+                })->count(),
+                'database_collections' => [
+                    'users' => \DB::connection('mongodb')->table('users')->count(),
+                    'groups' => \DB::connection('mongodb')->table('groups')->count(),
+                    'scheduled_posts' => \DB::connection('mongodb')->table('scheduled_posts')->count(),
+                    'post_logs' => \DB::connection('mongodb')->table('post_logs')->count(),
+                ]
+            ];
+            
+            return response()->json($data);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+        }
+    });
+});
+
+
 require __DIR__.'/admin.php';

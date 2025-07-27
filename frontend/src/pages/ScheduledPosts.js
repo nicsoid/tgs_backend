@@ -1,4 +1,4 @@
-// src/pages/ScheduledPosts.js - Fixed Version
+// src/pages/ScheduledPosts.js - Updated to show posts as always editable
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
@@ -12,6 +12,7 @@ import {
   PlusIcon,
   PencilIcon,
   UserGroupIcon,
+  CheckIcon,
 } from "@heroicons/react/outline";
 import { useTranslation } from "react-i18next";
 
@@ -65,21 +66,51 @@ const ScheduledPosts = () => {
     }
   };
 
-  const getStatusBadge = (status) => {
-    const statusClasses = {
-      pending: "bg-yellow-100 text-yellow-800",
-      partially_sent: "bg-blue-100 text-blue-800",
-      completed: "bg-green-100 text-green-800",
-      failed: "bg-red-100 text-red-800",
-    };
+  const getPostStatus = (post) => {
+    const now = new Date();
+    const scheduleTimes = post.schedule_times || [];
 
-    return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClasses[status]}`}
-      >
-        {t(`status_${status}`)}
-      </span>
-    );
+    // Count future times
+    const futureTimes = scheduleTimes.filter(
+      (time) => new Date(time) > now
+    ).length;
+
+    // Count sent messages (from statistics if available)
+    const statistics = post.statistics || {};
+    const sentCount = statistics.total_sent || 0;
+    const totalScheduled = scheduleTimes.length * (post.group_ids?.length || 1);
+
+    if (futureTimes > 0) {
+      return {
+        label: "Active",
+        color: "bg-green-100 text-green-800",
+        description: `${futureTimes} future sends queued`,
+      };
+    } else if (sentCount === totalScheduled && totalScheduled > 0) {
+      return {
+        label: "Completed",
+        color: "bg-blue-100 text-blue-800",
+        description: "All messages sent",
+      };
+    } else if (sentCount > 0) {
+      return {
+        label: "Partial",
+        color: "bg-yellow-100 text-yellow-800",
+        description: `${sentCount}/${totalScheduled} sent`,
+      };
+    } else if (scheduleTimes.length > 0) {
+      return {
+        label: "No Future Sends",
+        color: "bg-gray-100 text-gray-800",
+        description: "All times are in the past",
+      };
+    } else {
+      return {
+        label: "Draft",
+        color: "bg-gray-100 text-gray-800",
+        description: "No schedule times set",
+      };
+    }
   };
 
   const renderGroupsList = (post) => {
@@ -125,6 +156,23 @@ const ScheduledPosts = () => {
     );
   };
 
+  const getNextSendTime = (post) => {
+    const now = new Date();
+    const futureTimes = post.schedule_times
+      ?.filter((time) => new Date(time) > now)
+      ?.sort();
+
+    return futureTimes && futureTimes.length > 0 ? futureTimes[0] : null;
+  };
+
+  const getPastSendCount = (post) => {
+    const now = new Date();
+    const pastTimes =
+      post.schedule_times?.filter((time) => new Date(time) <= now) || [];
+
+    return pastTimes.length;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -162,98 +210,123 @@ const ScheduledPosts = () => {
           </div>
         ) : (
           <ul className="divide-y divide-gray-200">
-            {posts.map((post) => (
-              <li key={post._id}>
-                <div className="px-4 py-4 sm:px-6">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        {renderGroupsList(post)}
-                        <div className="ml-2 flex-shrink-0 flex">
-                          {getStatusBadge(post.status)}
+            {posts.map((post) => {
+              const status = getPostStatus(post);
+              const nextSend = getNextSendTime(post);
+              const pastSendCount = getPastSendCount(post);
+
+              return (
+                <li key={post._id}>
+                  <div className="px-4 py-4 sm:px-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          {renderGroupsList(post)}
+                          <div className="ml-2 flex-shrink-0 flex items-center space-x-2">
+                            <span
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${status.color}`}
+                            >
+                              {status.label}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                      <div className="mt-2 sm:flex sm:justify-between">
-                        <div className="sm:flex">
-                          <p className="flex items-center text-sm text-gray-500">
-                            <ClockIcon className="flex-shrink-0 mr-1.5 h-5 w-5 text-gray-400" />
-                            {post.schedule_times.length} {t("scheduled_times")}
-                            {post.groups_count && post.groups_count > 1 && (
-                              <span className="ml-2 text-xs bg-gray-100 px-2 py-1 rounded">
-                                {post.total_scheduled ||
-                                  post.schedule_times.length *
-                                    post.groups_count}{" "}
-                                total messages
+                        <div className="mt-2 sm:flex sm:justify-between">
+                          <div className="sm:flex sm:flex-col space-y-1">
+                            <div className="flex items-center text-sm text-gray-500">
+                              <ClockIcon className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" />
+                              <span>
+                                {post.schedule_times?.length || 0} scheduled
+                                times
+                                {pastSendCount > 0 &&
+                                  ` (${pastSendCount} past)`}
                               </span>
+                            </div>
+
+                            <div className="flex items-center text-sm text-gray-500">
+                              <CurrencyDollarIcon className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" />
+                              <span>
+                                {post.advertiser?.amount_paid || 0}{" "}
+                                {post.advertiser?.currency || "USD"} {t("from")}{" "}
+                                @
+                                {post.advertiser?.telegram_username ||
+                                  "unknown"}
+                              </span>
+                            </div>
+
+                            {nextSend && (
+                              <div className="flex items-center text-sm text-green-600">
+                                <CalendarIcon className="flex-shrink-0 mr-1.5 h-4 w-4 text-green-400" />
+                                <span>
+                                  Next:{" "}
+                                  {format(
+                                    new Date(nextSend),
+                                    "MMM d, yyyy HH:mm"
+                                  )}
+                                </span>
+                              </div>
                             )}
-                          </p>
-                          <p className="mt-2 flex items-center text-sm text-gray-500 sm:mt-0 sm:ml-6">
-                            <CurrencyDollarIcon className="flex-shrink-0 mr-1.5 h-5 w-5 text-gray-400" />
-                            {post.advertiser.amount_paid}{" "}
-                            {post.advertiser.currency} {t("from")} @
-                            {post.advertiser.telegram_username}
-                          </p>
+
+                            {post.statistics?.total_sent > 0 && (
+                              <div className="flex items-center text-sm text-blue-600">
+                                <CheckIcon className="flex-shrink-0 mr-1.5 h-4 w-4 text-blue-400" />
+                                <span>
+                                  {post.statistics.total_sent} messages sent
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-2 flex items-center text-sm text-gray-500 sm:mt-0">
+                            <p>
+                              {t("created")}{" "}
+                              {format(new Date(post.created_at), "MMM d, yyyy")}
+                            </p>
+                          </div>
                         </div>
-                        <div className="mt-2 flex items-center text-sm text-gray-500 sm:mt-0">
-                          <p>
-                            {t("created")}{" "}
-                            {format(new Date(post.created_at), "MMM d, yyyy")}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="mt-2">
-                        <p className="text-sm text-gray-900 line-clamp-2">
-                          {post.content.text}
-                        </p>
-                      </div>
-                      {post.content.media && post.content.media.length > 0 && (
+
                         <div className="mt-2">
-                          <p className="text-sm text-gray-500">
-                            {post.content.media.length}{" "}
-                            {t("media_files_attached")}
+                          <p className="text-sm text-gray-900 line-clamp-2">
+                            {post.content?.text || "No message text"}
                           </p>
                         </div>
-                      )}
-                      <div className="mt-2">
-                        <p className="text-sm text-gray-500">
-                          {t("next_send")}:{" "}
-                          {post.schedule_times
-                            .filter((time) => new Date(time) > new Date())
-                            .sort()[0]
-                            ? format(
-                                new Date(
-                                  post.schedule_times
-                                    .filter(
-                                      (time) => new Date(time) > new Date()
-                                    )
-                                    .sort()[0]
-                                ),
-                                "MMM d, yyyy HH:mm"
-                              )
-                            : t("all_sent")}
-                        </p>
+
+                        {post.content?.media &&
+                          post.content.media.length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-sm text-gray-500">
+                                {post.content.media.length}{" "}
+                                {t("media_files_attached")}
+                              </p>
+                            </div>
+                          )}
+
+                        <div className="mt-2 text-xs text-gray-400">
+                          {status.description}
+                        </div>
                       </div>
-                    </div>
-                    {post.status === "pending" && (
+
+                      {/* Always show edit and delete buttons */}
                       <div className="ml-4 flex items-center space-x-2">
                         <Link
                           to={`/posts/edit/${post.id || post._id}`}
                           className="inline-flex items-center p-2 border border-transparent rounded-full shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                          title="Edit post (always available)"
                         >
                           <PencilIcon className="h-5 w-5" />
                         </Link>
                         <button
                           onClick={() => deletePost(post)}
                           className="inline-flex items-center p-2 border border-transparent rounded-full shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                          title="Delete post"
                         >
                           <TrashIcon className="h-5 w-5" />
                         </button>
                       </div>
-                    )}
+                    </div>
                   </div>
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

@@ -1,5 +1,5 @@
 <?php
-// app/Models/ScheduledPost.php
+// app/Models/ScheduledPost.php - Always Editable Version
 
 namespace App\Models;
 
@@ -13,8 +13,7 @@ class ScheduledPost extends Model
     
     protected $fillable = [
         'user_id', 'group_ids', 'content', 'schedule_times',
-        'schedule_times_utc', 'user_timezone', 'advertiser', 
-        'status', 'send_count', 'total_scheduled', 'groups_count'
+        'schedule_times_utc', 'user_timezone', 'advertiser'
     ];
 
     protected $casts = [
@@ -25,23 +24,16 @@ class ScheduledPost extends Model
         'group_ids' => 'array'
     ];
 
-    protected $attributes = [
-        'send_count' => 0,
-        'status' => 'pending'
-    ];
-
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
-    // Relationship to get all groups this post is scheduled for
     public function groups()
     {
         return $this->belongsToMany(Group::class, null, 'post_id', 'group_ids', '_id', '_id');
     }
 
-    // Helper method to get groups by IDs
     public function getGroupsAttribute()
     {
         if (!isset($this->attributes['group_ids']) || empty($this->attributes['group_ids'])) {
@@ -51,35 +43,96 @@ class ScheduledPost extends Model
         return Group::whereIn('_id', $this->attributes['group_ids'])->get();
     }
 
-    // Backward compatibility - get first group as 'group'
-    public function getGroupAttribute()
-    {
-        $groups = $this->groups;
-        return $groups->first();
-    }
-
     public function logs()
     {
         return $this->hasMany(PostLog::class, 'post_id');
     }
 
+    /**
+     * Get pending (future) schedule times
+     */
+    public function getPendingScheduleTimes()
+    {
+        $now = Carbon::now('UTC');
+        $pendingTimes = [];
+        
+        if (!$this->schedule_times_utc) {
+            return $pendingTimes;
+        }
+        
+        foreach ($this->schedule_times_utc as $index => $utcTime) {
+            $timeCarbon = Carbon::parse($utcTime, 'UTC');
+            if ($timeCarbon->isFuture()) {
+                $pendingTimes[] = [
+                    'index' => $index,
+                    'utc_time' => $utcTime,
+                    'user_time' => $this->schedule_times[$index] ?? $utcTime,
+                    'carbon' => $timeCarbon
+                ];
+            }
+        }
+        
+        return $pendingTimes;
+    }
+
+    /**
+     * Get sent schedule times (from logs)
+     */
+    public function getSentScheduleTimes()
+    {
+        return $this->logs()
+            ->where('status', 'sent')
+            ->select('scheduled_time', 'sent_at', 'group_id')
+            ->get()
+            ->groupBy('scheduled_time');
+    }
+
+    /**
+     * Check if a specific time has been sent to all groups
+     */
+    public function isTimeSentToAllGroups($scheduledTime)
+    {
+        $groupIds = $this->group_ids ?? [];
+        $sentLogs = $this->logs()
+            ->where('scheduled_time', $scheduledTime)
+            ->where('status', 'sent')
+            ->pluck('group_id')
+            ->toArray();
+        
+        return count(array_intersect($groupIds, $sentLogs)) === count($groupIds);
+    }
+
+    /**
+     * Get statistics for this post
+     */
     public function getStatistics()
     {
-        $logs = $this->logs()->where('status', 'sent')->get();
+        $sentLogs = $this->logs()->where('status', 'sent')->get();
+        $failedLogs = $this->logs()->where('status', 'failed')->get();
+        
+        $totalScheduled = count($this->schedule_times_utc ?? []) * count($this->group_ids ?? []);
         
         return [
-            'total_sent' => $logs->count(),
-            'total_scheduled' => $this->total_scheduled,
-            'success_rate' => $this->total_scheduled > 0 
-                ? round(($logs->count() / $this->total_scheduled) * 100, 2) 
+            'total_sent' => $sentLogs->count(),
+            'total_failed' => $failedLogs->count(),
+            'total_scheduled' => $totalScheduled,
+            'success_rate' => $totalScheduled > 0 
+                ? round(($sentLogs->count() / $totalScheduled) * 100, 2) 
                 : 0,
-            'sent_times' => $logs->pluck('sent_at')->map(function($date) {
+            'pending_count' => count($this->getPendingScheduleTimes()) * count($this->group_ids ?? []),
+            'sent_times' => $sentLogs->pluck('sent_at')->map(function($date) {
                 return Carbon::parse($date)->timezone($this->user_timezone);
             }),
-            'advertiser' => $this->advertiser,
-            'status' => $this->status,
             'groups_count' => count($this->group_ids ?? [])
         ];
+    }
+
+    /**
+     * Check if post has any pending sends
+     */
+    public function hasPendingSends()
+    {
+        return count($this->getPendingScheduleTimes()) > 0;
     }
 
     public static function boot()
@@ -87,54 +140,36 @@ class ScheduledPost extends Model
         parent::boot();
         
         static::creating(function ($post) {
-            // Convert schedule times to UTC with proper timezone handling
-            $userTimezone = $post->user_timezone ?: 'UTC';
-            
-            $post->schedule_times_utc = collect($post->schedule_times)
-                ->map(function ($time) use ($userTimezone) {
-                    try {
-                        // Parse time in user's timezone and convert to UTC
-                        $carbonTime = Carbon::parse($time, $userTimezone);
-                        return $carbonTime->utc()->format('Y-m-d H:i:s');
-                    } catch (\Exception $e) {
-                        \Log::error("Error converting time {$time} from {$userTimezone} to UTC: " . $e->getMessage());
-                        // Fallback: assume it's already UTC
-                        return Carbon::parse($time)->format('Y-m-d H:i:s');
-                    }
-                })
-                ->toArray();
-            
-            // Calculate total scheduled messages (groups × schedule times)
-            $groupCount = count($post->group_ids ?? []);
-            $timeCount = count($post->schedule_times ?? []);
-            $post->total_scheduled = $groupCount * $timeCount;
-            $post->groups_count = $groupCount;
+            $post->convertScheduleTimesToUtc();
         });
 
         static::updating(function ($post) {
-            // Recalculate if schedule times or groups changed
-            if ($post->isDirty(['schedule_times', 'group_ids'])) {
-                if ($post->isDirty('schedule_times')) {
-                    $userTimezone = $post->user_timezone ?: 'UTC';
-                    
-                    $post->schedule_times_utc = collect($post->schedule_times)
-                        ->map(function ($time) use ($userTimezone) {
-                            try {
-                                $carbonTime = Carbon::parse($time, $userTimezone);
-                                return $carbonTime->utc()->format('Y-m-d H:i:s');
-                            } catch (\Exception $e) {
-                                \Log::error("Error converting time {$time} from {$userTimezone} to UTC: " . $e->getMessage());
-                                return Carbon::parse($time)->format('Y-m-d H:i:s');
-                            }
-                        })
-                        ->toArray();
-                }
-                
-                $groupCount = count($post->group_ids ?? []);
-                $timeCount = count($post->schedule_times ?? []);
-                $post->total_scheduled = $groupCount * $timeCount;
-                $post->groups_count = $groupCount;
+            // Always recalculate UTC times when schedule_times change
+            if ($post->isDirty('schedule_times')) {
+                $post->convertScheduleTimesToUtc();
             }
         });
+    }
+
+    /**
+     * Convert user schedule times to UTC
+     */
+    private function convertScheduleTimesToUtc()
+    {
+        $userTimezone = $this->user_timezone ?: 'UTC';
+        
+        $this->schedule_times_utc = collect($this->schedule_times)
+            ->map(function ($time) use ($userTimezone) {
+                try {
+                    // Parse time in user's timezone and convert to UTC
+                    $carbonTime = Carbon::parse($time, $userTimezone);
+                    return $carbonTime->utc()->format('Y-m-d H:i:s');
+                } catch (\Exception $e) {
+                    \Log::error("Error converting time {$time} from {$userTimezone} to UTC: " . $e->getMessage());
+                    // Fallback: assume it's already UTC
+                    return Carbon::parse($time)->format('Y-m-d H:i:s');
+                }
+            })
+            ->toArray();
     }
 }
