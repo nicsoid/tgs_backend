@@ -14,7 +14,10 @@ class Kernel extends ConsoleKernel
     protected function schedule(Schedule $schedule): void
     {
         // Process scheduled posts every minute
-        $schedule->command('posts:process-scheduled')->everyMinute();
+        $schedule->command('posts:process-scheduled')
+        ->everyMinute()
+        ->withoutOverlapping()
+        ->runInBackground();;
         
         // Update currency rates daily at midnight
         $schedule->command('currencies:update')->daily();

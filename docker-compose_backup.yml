@@ -1,0 +1,269 @@
+# docker-compose.yml - Corrected for Frontend Ngrok + Backend Localhost
+version: "3.8"
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7
+    container_name: telegram-scheduler-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+      - MONGO_INITDB_DATABASE=telegram_scheduler
+      - TZ=UTC
+    volumes:
+      - mongodb_data:/data/db
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - telegram-scheduler
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+
+  # Redis Cache & Queue
+  redis:
+    image: redis:7-alpine
+    environment:
+      - TZ=UTC
+    container_name: telegram-scheduler-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - telegram-scheduler
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # Backend (Laravel API) - localhost:8000
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: telegram-scheduler-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Backend stays on localhost for API calls
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - APP_KEY=base64:wtqQ/6f+i9YERhRjXUttSgRw4VCEtn+zSsCyZioemZs=
+      - APP_URL=http://localhost:8000
+
+      # Database Configuration
+      - DB_CONNECTION=mongodb
+      - MONGO_DB_CONNECTION=mongodb://admin:password@mongodb:27017/telegram_scheduler?authSource=admin
+      - DB_DATABASE=telegram_scheduler
+      - DB_AUTHENTICATION_DATABASE=admin
+
+      # Queue & Cache Configuration
+      - QUEUE_CONNECTION=redis
+      - CACHE_STORE=redis
+      - SESSION_DRIVER=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+
+      # JWT Configuration
+      - JWT_SECRET=fIXfC0pDOdYeYxRY35WcPYJgt07tXtfxGzRdRMlHMb4ytitTHbkT8YooO8w3Jxxj
+      - JWT_TTL=60
+      - JWT_REFRESH_TTL=20160
+
+      # Telegram Bot Configuration
+      - TELEGRAM_BOT_TOKEN=7779533338:AAH-B1-r4GQzJStkyC7Ecziip7ccgso5AOs
+      - TELEGRAM_BOT_USERNAME=tgappy_bot
+
+      # Admin Configuration
+      - ADMIN_TELEGRAM_IDS=6941596189
+
+      # Container Role
+      - CONTAINER_ROLE=app
+
+      # Frontend URL (Ngrok) + CORS Configuration
+      - FRONTEND_URL=https://68c6605bb77f.ngrok-free.app
+      - CORS_ALLOWED_ORIGINS=https://68c6605bb77f.ngrok-free.app,http://localhost:3000,http://localhost:8000,https://tgappy.com,https://api.tgappy.com
+
+      # Stripe Test Configuration
+      - STRIPE_KEY=sk_test_51Rcqa9RqiHAAOQNt4Qlp9zmFKkjf78mRgjqjTveYVmZg7z8OpEvElH0qkJMMaNKvgtJwUMa8kxWzER7pRCwwDe5K00I41OXJuh
+      - STRIPE_PUBLIC_KEY=pk_test_51Rcqa9RqiHAAOQNt6dQOzDxtKXI4hl3PjmdxnnOz6Y2ARZJ4zXE03frTz6FPhMbp6ZGMxERdRVi1xJMK0SW6i2Gn00NYOU3H8O
+      - STRIPE_WEBHOOK_SECRET=whsec_6GmWJJhXEHNwVLwi79M3eLZFgNFzcPo8
+      - STRIPE_PRICE_ID_PRO=price_1Rdv4sRqiHAAOQNtgBC15qcq
+      - STRIPE_PRODUCT_ID_PRO=prod_SZ3Bv1lG9HoCLM
+      - STRIPE_PRICE_ID_ULTRA=price_1RiLAnRqiHAAOQNt8JKhJKZM
+      - STRIPE_PRODUCT_ID_ULTRA=prod_SdcPkOn7RC90lG
+      - TZ=UTC
+      - APP_TIMEZONE=UTC
+
+    volumes:
+      - ./backend:/var/www/html
+      - backend_storage:/var/www/html/storage
+      - backend_uploads:/var/www/html/storage/app/public
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - telegram-scheduler
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD", "sh", "-c", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  # Queue Workers
+  queue-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    environment:
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - APP_KEY=base64:wtqQ/6f+i9YERhRjXUttSgRw4VCEtn+zSsCyZioemZs=
+      - APP_URL=http://localhost:8000
+      - DB_CONNECTION=mongodb
+      - MONGO_DB_CONNECTION=mongodb://admin:password@mongodb:27017/telegram_scheduler?authSource=admin
+      - DB_DATABASE=telegram_scheduler
+      - DB_AUTHENTICATION_DATABASE=admin
+      - QUEUE_CONNECTION=redis
+      - CACHE_STORE=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_SECRET=fIXfC0pDOdYeYxRY35WcPYJgt07tXtfxGzRdRMlHMb4ytitTHbkT8YooO8w3Jxxj
+      - TELEGRAM_BOT_TOKEN=7779533338:AAH-B1-r4GQzJStkyC7Ecziip7ccgso5AOs
+      - CONTAINER_ROLE=queue
+    volumes:
+      - ./backend:/var/www/html
+      - backend_storage:/var/www/html/storage
+      - backend_uploads:/var/www/html/storage/app/public
+    networks:
+      - telegram-scheduler
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+    command: php artisan queue:work redis --sleep=1 --tries=3 --max-time=3600 --memory=512
+
+  # Scheduler (Cron Jobs)
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    environment:
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - APP_KEY=base64:wtqQ/6f+i9YERhRjXUttSgRw4VCEtn+zSsCyZioemZs=
+      - APP_URL=http://localhost:8000
+      - DB_CONNECTION=mongodb
+      - MONGO_DB_CONNECTION=mongodb://admin:password@mongodb:27017/telegram_scheduler?authSource=admin
+      - DB_DATABASE=telegram_scheduler
+      - DB_AUTHENTICATION_DATABASE=admin
+      - QUEUE_CONNECTION=redis
+      - CACHE_STORE=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_SECRET=fIXfC0pDOdYeYxRY35WcPYJgt07tXtfxGzRdRMlHMb4ytitTHbkT8YooO8w3Jxxj
+      - TELEGRAM_BOT_TOKEN=7779533338:AAH-B1-r4GQzJStkyC7Ecziip7ccgso5AOs
+      - CONTAINER_ROLE=scheduler
+    volumes:
+      - ./backend:/var/www/html
+      - backend_storage:/var/www/html/storage
+    networks:
+      - telegram-scheduler
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: >
+      sh -c "
+        while true; do
+          php artisan schedule:run --verbose --no-interaction
+          sleep 60
+        done
+      "
+
+  # Frontend (React) - runs on port 3000, accessible via ngrok
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: telegram-scheduler-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      # Frontend uses ngrok URL for Telegram Web App
+      # But API calls go to localhost:8000
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_TELEGRAM_BOT_USERNAME=tgappy_bot
+      - REACT_APP_FRONTEND_URL=https://68c6605bb77f.ngrok-free.app
+      - TZ=UTC
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - telegram-scheduler
+    depends_on:
+      - backend
+    profiles:
+      - frontend
+
+  # Redis UI (Optional - for monitoring)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: telegram-scheduler-redis-ui
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    networks:
+      - telegram-scheduler
+    depends_on:
+      - redis
+    profiles:
+      - monitoring
+
+networks:
+  telegram-scheduler:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local
+  backend_storage:
+    driver: local
+  backend_uploads:
+    driver: local
