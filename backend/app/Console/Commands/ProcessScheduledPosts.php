@@ -1,5 +1,5 @@
 <?php
-// app/Console/Commands/ProcessScheduledPosts.php - FIXED TIME LOGIC
+// app/Console/Commands/ProcessScheduledPosts.php - FIXED without verbose conflict
 
 namespace App\Console\Commands;
 
@@ -16,9 +16,10 @@ class ProcessScheduledPosts extends Command
                            {--batch-size=100 : Number of posts to process per batch}
                            {--max-jobs=1000 : Maximum jobs to dispatch per run}
                            {--dry-run : Show what would be processed without dispatching}
-                           {--force-past : Process all past times regardless of age}';
+                           {--force : Force process all times in the past 24 hours}
+                           {--debug : Show detailed output}';
     
-    protected $description = 'Process scheduled posts - FIXED TIME LOGIC VERSION';
+    protected $description = 'Process scheduled posts - FIXED TIME LOGIC NO CONFLICTS';
 
     public function handle()
     {
@@ -26,11 +27,12 @@ class ProcessScheduledPosts extends Command
         $batchSize = (int) $this->option('batch-size');
         $maxJobs = (int) $this->option('max-jobs');
         $dryRun = $this->option('dry-run');
-        $forcePast = $this->option('force-past');
+        $force = $this->option('force');
+        $debug = $this->option('debug');
 
         // Prevent overlapping runs
         $lockKey = 'process_scheduled_posts';
-        $lock = Cache::lock($lockKey, 300); // 5 minutes
+        $lock = Cache::lock($lockKey, 300);
 
         if (!$lock->get()) {
             $this->warn('Another instance is already processing. Skipping.');
@@ -44,38 +46,53 @@ class ProcessScheduledPosts extends Command
             }
 
             $now = Carbon::now('UTC');
-            // FIXED: Much more generous time window for processing
-            $cutoffTime = $now->copy()->addMinutes(10); // 10 minute future buffer
-            $pastCutoff = $forcePast ? $now->copy()->subDays(7) : $now->copy()->subHours(3); // 3 hours past
+            
+            // MUCH MORE GENEROUS time windows
+            if ($force) {
+                $pastCutoff = $now->copy()->subHours(24);
+                $futureCutoff = $now->copy()->addHours(6); // 6 hours future!
+                $this->info('FORCE MODE: Processing 24 hours past to 6 hours future');
+            } else {
+                $pastCutoff = $now->copy()->subHours(3);
+                $futureCutoff = $now->copy()->addHours(3); // 3 hours future!
+                $this->info('NORMAL MODE: Processing 3 hours past to 3 hours future');
+            }
 
             $this->info("Current UTC time: {$now->format('Y-m-d H:i:s')}");
-            $this->info("Processing times from: {$pastCutoff->format('Y-m-d H:i:s')} to: {$cutoffTime->format('Y-m-d H:i:s')}");
+            $this->info("Processing window: {$pastCutoff->format('Y-m-d H:i:s')} to {$futureCutoff->format('Y-m-d H:i:s')}");
 
             $totalDispatched = 0;
             
-            // Get ALL posts regardless of status for debugging
-            $query = ScheduledPost::select('_id', 'group_ids', 'schedule_times', 'schedule_times_utc', 'content', 'user_timezone', 'status');
+            // Get posts that should be processed
+            $posts = ScheduledPost::whereIn('status', ['pending', 'partially_sent'])->get();
             
-            if (!$forcePast) {
-                $query->whereIn('status', ['pending', 'partially_sent']);
+            if ($posts->isEmpty()) {
+                $this->warn('No pending posts found!');
+                return 0;
             }
             
-            $query->chunk($batchSize, function ($postChunk) use ($now, $cutoffTime, $pastCutoff, &$maxJobs, $dryRun, &$totalDispatched) {
-                $batchDispatched = $this->processBatch($postChunk, $now, $cutoffTime, $pastCutoff, $maxJobs, $dryRun);
-                $totalDispatched += $batchDispatched;
-                $maxJobs -= $batchDispatched;
-                
-                if ($maxJobs <= 0) {
+            $this->info("Found {$posts->count()} posts to check");
+
+            foreach ($posts as $post) {
+                if ($totalDispatched >= $maxJobs) {
                     $this->warn('Maximum job limit reached. Stopping.');
-                    return false; // Stop chunk processing
+                    break;
                 }
-                
-                return true; // Continue processing
-            });
+
+                $dispatched = $this->processPost($post, $now, $pastCutoff, $futureCutoff, $dryRun, $debug);
+                $totalDispatched += $dispatched;
+            }
 
             $processingTime = round((microtime(true) - $startTime) * 1000, 2);
             $this->info("Processing completed in {$processingTime}ms");
             $this->info("Total jobs dispatched: {$totalDispatched}");
+
+            if ($totalDispatched === 0) {
+                $this->warn('⚠️  NO JOBS DISPATCHED!');
+                $this->info('Times are outside processing window. Use --force to process future times.');
+            } else {
+                $this->info("✅ {$totalDispatched} messages queued for sending!");
+            }
 
             return 0;
 
@@ -84,116 +101,84 @@ class ProcessScheduledPosts extends Command
         }
     }
 
-    private function processBatch($posts, $now, $cutoffTime, $pastCutoff, &$maxJobs, $dryRun)
-    {
-        $dispatchedInBatch = 0;
-
-        foreach ($posts as $post) {
-            if ($maxJobs <= 0) {
-                break;
-            }
-
-            $dispatched = $this->processPost($post, $now, $cutoffTime, $pastCutoff, $dryRun);
-            $dispatchedInBatch += $dispatched;
-            $maxJobs -= $dispatched;
-        }
-
-        if ($dispatchedInBatch > 0) {
-            $this->info("Dispatched {$dispatchedInBatch} jobs in this batch");
-        }
-
-        return $dispatchedInBatch;
-    }
-
-    private function processPost($post, $now, $cutoffTime, $pastCutoff, $dryRun)
+    private function processPost($post, $now, $pastCutoff, $futureCutoff, $dryRun, $debug)
     {
         $dispatched = 0;
         $groupIds = $post->group_ids ?? [];
         $scheduleTimesUtc = $post->schedule_times_utc ?? [];
         $scheduleTimesUser = $post->schedule_times ?? [];
 
+        // Validation
         if (empty($groupIds)) {
-            $this->warn("Post {$post->_id} has no groups, skipping");
+            if ($debug) $this->warn("Post {$post->id}: No groups");
             return 0;
         }
 
         if (empty($scheduleTimesUtc)) {
-            $this->warn("Post {$post->_id} has no UTC schedule times, skipping");
+            if ($debug) $this->warn("Post {$post->id}: No UTC schedule times");
             return 0;
         }
 
-        $this->info("Processing post {$post->_id} (status: {$post->status}) with " . count($scheduleTimesUtc) . " times and " . count($groupIds) . " groups");
+        if ($debug) {
+            $this->info("Processing Post {$post->id}: {$post->status}, " . count($scheduleTimesUtc) . " times, " . count($groupIds) . " groups");
+        }
 
         foreach ($scheduleTimesUtc as $index => $scheduledTimeUtc) {
             try {
                 $scheduledUtc = Carbon::parse($scheduledTimeUtc, 'UTC');
                 $originalScheduleTime = $scheduleTimesUser[$index] ?? $scheduledTimeUtc;
                 
-                $this->info("  Checking time: {$scheduledTimeUtc} (original: {$originalScheduleTime})");
+                // FIXED: Much more generous time window
+                $isInWindow = $scheduledUtc->gte($pastCutoff) && $scheduledUtc->lte($futureCutoff);
                 
-                // FIXED: More lenient time checking
-                $isPastCutoff = $scheduledUtc->gte($pastCutoff);
-                $isBeforeFuture = $scheduledUtc->lte($cutoffTime);
-                $shouldProcess = $isPastCutoff && $isBeforeFuture;
+                if ($debug) {
+                    $minutesFromNow = $now->diffInMinutes($scheduledUtc, false);
+                    $this->line("  Time {$index}: {$scheduledTimeUtc} ({$minutesFromNow} min) - " . 
+                              ($isInWindow ? 'IN WINDOW ✅' : 'OUTSIDE WINDOW ❌'));
+                }
                 
-                $this->info("    - Is after past cutoff ({$pastCutoff->format('Y-m-d H:i:s')}): " . ($isPastCutoff ? 'YES' : 'NO'));
-                $this->info("    - Is before future cutoff ({$cutoffTime->format('Y-m-d H:i:s')}): " . ($isBeforeFuture ? 'YES' : 'NO'));
-                $this->info("    - Should process: " . ($shouldProcess ? 'YES' : 'NO'));
-                
-                if ($shouldProcess) {
+                if ($isInWindow) {
                     foreach ($groupIds as $groupId) {
-                        // FIXED: Check for duplicates with more flexible matching
-                        if (!$this->isAlreadyProcessed($post->_id, $groupId, $originalScheduleTime, $scheduledTimeUtc)) {
+                        // Check for duplicates
+                        if (!$this->isAlreadyProcessed($post->id, $groupId, $originalScheduleTime)) {
                             if (!$dryRun) {
-                                // Add small random delay to spread load
-                                $delay = rand(1, 10); // 1-10 seconds
-                                
+                                // Dispatch with small random delay
                                 SendScheduledPost::dispatch(
-                                    $post->_id,
+                                    $post->id,
                                     $originalScheduleTime,
                                     $groupId
-                                )->delay(now()->addSeconds($delay));
+                                )->delay(now()->addSeconds(rand(1, 10)));
                             }
 
                             $dispatched++;
                             
-                            $this->line("  → Scheduled: Post {$post->_id} to Group {$groupId} at {$originalScheduleTime}" . 
-                                      ($dryRun ? ' [DRY RUN]' : ''));
+                            if ($debug) {
+                                $this->line("    → " . ($dryRun ? 'WOULD DISPATCH' : 'DISPATCHED') . 
+                                          ": Post {$post->id} to Group {$groupId}");
+                            }
                         } else {
-                            $this->line("  → Already processed: Post {$post->_id} to Group {$groupId} at {$originalScheduleTime}");
+                            if ($debug) {
+                                $this->line("    → ALREADY SENT: Post {$post->id} to Group {$groupId}");
+                            }
                         }
                     }
-                } else {
-                    $minutesAgo = $now->diffInMinutes($scheduledUtc, false);
-                    $this->info("    - Time is {$minutesAgo} minutes " . ($minutesAgo > 0 ? 'ago' : 'in the future'));
                 }
             } catch (\Exception $e) {
-                $this->error("Error processing time {$scheduledTimeUtc} for post {$post->_id}: " . $e->getMessage());
-                continue;
+                $this->error("Error processing time {$scheduledTimeUtc}: " . $e->getMessage());
             }
         }
 
         return $dispatched;
     }
 
-    private function isAlreadyProcessed($postId, $groupId, $scheduledTime, $scheduledTimeUtc = null): bool
+    private function isAlreadyProcessed($postId, $groupId, $scheduledTime): bool
     {
-        // Check both original time and UTC time for flexibility
-        $query = DB::connection('mongodb')
+        return DB::connection('mongodb')
             ->table('post_logs')
             ->where('post_id', $postId)
             ->where('group_id', $groupId)
-            ->where('status', 'sent');
-
-        // Check with original scheduled time
-        $exists1 = $query->where('scheduled_time', $scheduledTime)->exists();
-        
-        // Also check with UTC time if different
-        $exists2 = false;
-        if ($scheduledTimeUtc && $scheduledTimeUtc !== $scheduledTime) {
-            $exists2 = $query->where('scheduled_time', $scheduledTimeUtc)->exists();
-        }
-
-        return $exists1 || $exists2;
+            ->where('scheduled_time', $scheduledTime)
+            ->where('status', 'sent')
+            ->exists();
     }
 }
