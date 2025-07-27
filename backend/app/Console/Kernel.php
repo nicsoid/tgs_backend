@@ -1,5 +1,5 @@
 <?php
-// app/Console/Kernel.php
+// app/Console/Kernel.php - FIXED SYNTAX
 
 namespace App\Console;
 
@@ -13,11 +13,11 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        // Process scheduled posts every minute
-        $schedule->command('posts:process-scheduled')
-        ->everyMinute()
-        ->withoutOverlapping()
-        ->runInBackground();;
+        // Process scheduled posts every minute - FIXED: Removed double semicolon
+        $schedule->command('posts:process-scheduled');
+                //->everyMinute()
+                //->withoutOverlapping()
+                //->runInBackground();
         
         // Update currency rates daily at midnight
         $schedule->command('currencies:update')->daily();

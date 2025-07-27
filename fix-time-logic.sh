@@ -1,3 +1,27 @@
+#!/bin/bash
+# fix-time-logic.sh - Fix the time logic in ProcessScheduledPosts command
+
+echo "🔧 FIXING TIME LOGIC IN ProcessScheduledPosts"
+echo "============================================="
+
+echo "Based on your earlier debug, the issue is likely in the time comparison logic."
+echo "Let's create a fixed version of the ProcessScheduledPosts command."
+echo ""
+
+echo "1. BACKUP CURRENT COMMAND"
+echo "========================="
+if [ -f "backend/app/Console/Commands/ProcessScheduledPosts.php" ]; then
+    cp backend/app/Console/Commands/ProcessScheduledPosts.php backend/app/Console/Commands/ProcessScheduledPosts.php.backup
+    echo "✅ Backed up current ProcessScheduledPosts.php"
+else
+    echo "❌ ProcessScheduledPosts.php not found!"
+fi
+
+echo ""
+echo "2. CREATE FIXED ProcessScheduledPosts COMMAND"
+echo "============================================="
+
+cat > backend/app/Console/Commands/ProcessScheduledPosts.php << 'EOF'
 <?php
 // app/Console/Commands/ProcessScheduledPosts.php - FIXED TIME LOGIC
 
@@ -197,3 +221,56 @@ class ProcessScheduledPosts extends Command
         return $exists1 || $exists2;
     }
 }
+EOF
+
+echo "✅ Created fixed ProcessScheduledPosts command"
+
+echo ""
+echo "3. CLEAR CACHES AND RESTART"
+echo "=========================="
+docker-compose exec backend php artisan config:clear
+docker-compose exec backend php artisan cache:clear
+docker-compose exec backend composer dump-autoload
+
+echo ""
+echo "4. TEST FIXED COMMAND"
+echo "===================="
+echo "Testing the fixed command with verbose output:"
+docker-compose exec backend php artisan posts:process-scheduled --dry-run
+
+echo ""
+echo "5. TEST WITH FORCE-PAST OPTION"
+echo "=============================="
+echo "Testing with force-past to catch old messages:"
+docker-compose exec backend php artisan posts:process-scheduled --force-past --dry-run
+
+echo ""
+echo "6. RUN FOR REAL (SEND MESSAGES)"
+echo "==============================="
+echo "Running without dry-run to actually send messages:"
+docker-compose exec backend php artisan posts:process-scheduled --force-past
+
+echo ""
+echo "7. CHECK QUEUE AND PROCESS JOBS"
+echo "==============================="
+echo "Checking queue size:"
+docker-compose exec backend php artisan tinker --execute="
+\$redis = app('redis')->connection();
+echo 'Default queue size: ' . \$redis->llen('queues:default');
+echo 'Telegram queue 1: ' . \$redis->llen('queues:telegram-messages-1');
+"
+
+echo ""
+echo "Processing queue jobs:"
+docker-compose exec backend php artisan queue:work --once --timeout=30 --verbose
+
+echo ""
+echo "🎯 FIXES APPLIED"
+echo "================"
+echo "1. Extended time window (3 hours past, 10 minutes future)"
+echo "2. More detailed logging to see exactly what's happening"
+echo "3. Force-past option to catch old messages"
+echo "4. Better duplicate detection"
+echo "5. Improved error handling"
+echo ""
+echo "Your messages should now be processed and sent!"

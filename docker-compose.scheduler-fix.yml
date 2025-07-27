@@ -1,0 +1,77 @@
+# docker-compose.scheduler-fix.yml - Fixed scheduler configuration
+version: "3.8"
+
+services:
+  # Fixed Scheduler with proper command detection
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    environment:
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - APP_KEY=base64:wtqQ/6f+i9YERhRjXUttSgRw4VCEtn+zSsCyZioemZs=
+      - APP_URL=http://localhost:8000
+      - DB_CONNECTION=mongodb
+      - MONGO_DB_CONNECTION=mongodb://admin:password@mongodb:27017/telegram_scheduler?authSource=admin
+      - DB_DATABASE=telegram_scheduler
+      - DB_AUTHENTICATION_DATABASE=admin
+      - QUEUE_CONNECTION=redis
+      - CACHE_STORE=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_SECRET=fIXfC0pDOdYeYxRY35WcPYJgt07tXtfxGzRdRMlHMb4ytitTHbkT8YooO8w3Jxxj
+      - TELEGRAM_BOT_TOKEN=7779533338:AAH-B1-r4GQzJStkyC7Ecziip7ccgso5AOs
+      - CONTAINER_ROLE=scheduler
+    volumes:
+      - ./backend:/var/www/html
+      - backend_storage:/var/www/html/storage
+    networks:
+      - telegram-scheduler
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Fixed Scheduler Starting...'
+        
+        # Wait for backend
+        until curl -f http://backend:8000/health >/dev/null 2>&1; do
+          echo 'Waiting for backend...'
+          sleep 5
+        done
+        
+        echo 'Backend ready, clearing caches...'
+        php artisan config:clear
+        php artisan route:clear
+        php artisan cache:clear
+        
+        echo 'Testing command registration:'
+        php artisan list | grep 'posts:'
+        
+        echo 'Testing schedule detection:'
+        php artisan schedule:list
+        
+        echo 'Starting scheduler loop...'
+        while true; do
+          echo '[Scheduler] Running at: $(date)'
+          
+          # Clear cache before each run to ensure fresh config
+          php artisan config:clear >/dev/null 2>&1
+          
+          php artisan schedule:run --verbose --no-interaction
+          echo '[Scheduler] Completed at: $(date)'
+          sleep 60
+        done
+      "
+
+volumes:
+  backend_storage:
+    external: true
+
+networks:
+  telegram-scheduler:
+    external: true

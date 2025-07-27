@@ -1,0 +1,95 @@
+# docker-compose.override.yml - Fixed queue workers
+version: "3.8"
+
+services:
+  # Fixed Queue Workers - Better command and error handling
+  queue-worker:
+    command: >
+      sh -c "
+        echo 'Queue Worker Starting...'
+        
+        # Wait for dependencies
+        until nc -z mongodb 27017; do
+          echo 'Waiting for MongoDB...'
+          sleep 2
+        done
+        
+        until nc -z redis 6379; do
+          echo 'Waiting for Redis...'
+          sleep 2
+        done
+        
+        echo 'Dependencies ready, starting queue worker...'
+        
+        # Test database connection first
+        php artisan tinker --execute='
+          try {
+            DB::connection(\"mongodb\")->listCollections();
+            echo \"MongoDB: OK\";
+          } catch (Exception \$e) {
+            echo \"MongoDB Error: \" . \$e->getMessage();
+            exit(1);
+          }
+        '
+        
+        # Test Redis connection
+        php artisan tinker --execute='
+          try {
+            Redis::connection()->ping();
+            echo \"Redis: OK\";
+          } catch (Exception \$e) {
+            echo \"Redis Error: \" . \$e->getMessage();
+            exit(1);
+          }
+        '
+        
+        echo 'Starting queue worker loop...'
+        
+        # Better queue worker with restart capability
+        while true; do
+          echo '[Queue] Starting worker at: $(date)'
+          php artisan queue:work redis \
+            --sleep=3 \
+            --tries=3 \
+            --max-time=3600 \
+            --memory=512 \
+            --timeout=60 \
+            --verbose \
+            --stop-when-empty || {
+            echo '[Queue] Worker stopped, waiting 5 seconds before restart...'
+            sleep 5
+          }
+          
+          echo '[Queue] Worker cycle completed at: $(date)'
+          sleep 1
+        done
+      "
+    deploy:
+      replicas: 1  # Reduced to 1 for debugging
+
+  # Fixed Scheduler - Better logging and error handling
+  scheduler:
+    command: >
+      sh -c "
+        echo 'Scheduler Starting...'
+        
+        # Wait for backend to be ready
+        until curl -f http://backend:8000/health >/dev/null 2>&1; do
+          echo 'Waiting for backend...'
+          sleep 5
+        done
+        
+        echo 'Backend ready, starting scheduler...'
+        
+        # Show what commands are scheduled
+        echo 'Scheduled commands:'
+        php artisan schedule:list
+        
+        echo 'Starting scheduler loop...'
+        while true; do
+          echo '[Scheduler] Running at: $(date)'
+          php artisan schedule:run --verbose --no-interaction
+          echo '[Scheduler] Completed at: $(date)'
+          sleep 60
+        done
+      "
