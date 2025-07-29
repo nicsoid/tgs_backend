@@ -1,5 +1,5 @@
 <?php
-// app/Console/Commands/ProcessScheduledPosts.php - FIXED without verbose conflict
+// app/Console/Commands/ProcessScheduledPosts.php - TIMEZONE AWARE VERSION
 
 namespace App\Console\Commands;
 
@@ -16,10 +16,10 @@ class ProcessScheduledPosts extends Command
                            {--batch-size=100 : Number of posts to process per batch}
                            {--max-jobs=1000 : Maximum jobs to dispatch per run}
                            {--dry-run : Show what would be processed without dispatching}
-                           {--force : Force process all times in the past 24 hours}
-                           {--debug : Show detailed output}';
+                           {--force : Process all times within 24 hours past/future}
+                           {--debug : Show detailed timezone debugging}';
     
-    protected $description = 'Process scheduled posts - FIXED TIME LOGIC NO CONFLICTS';
+    protected $description = 'Process scheduled posts - TIMEZONE AWARE VERSION with expanded windows';
 
     public function handle()
     {
@@ -40,32 +40,33 @@ class ProcessScheduledPosts extends Command
         }
 
         try {
-            $this->info('Processing scheduled posts...');
+            $this->info('🌍 Processing scheduled posts with timezone awareness...');
             if ($dryRun) {
                 $this->warn('DRY RUN MODE - No jobs will be dispatched');
             }
 
-            $now = Carbon::now('UTC');
+            $nowUtc = Carbon::now('UTC');
             
-            // MUCH MORE GENEROUS time windows
+            // EXPANDED processing windows
             if ($force) {
-                $pastCutoff = $now->copy()->subHours(24);
-                $futureCutoff = $now->copy()->addHours(6); // 6 hours future!
-                $this->info('FORCE MODE: Processing 24 hours past to 6 hours future');
+                $pastCutoff = $nowUtc->copy()->subHours(24);
+                $futureCutoff = $nowUtc->copy()->addHours(24);
+                $this->info('FORCE MODE: Processing 24 hours past to 24 hours future');
             } else {
-                $pastCutoff = $now->copy()->subHours(3);
-                $futureCutoff = $now->copy()->addHours(3); // 3 hours future!
-                $this->info('NORMAL MODE: Processing 3 hours past to 3 hours future');
+                // More generous normal windows
+                $pastCutoff = $nowUtc->copy()->subHours(6);    // 6 hours past
+                $futureCutoff = $nowUtc->copy()->addHours(1);  // 1 hour future
+                $this->info('NORMAL MODE: Processing 6 hours past to 1 hour future');
             }
 
-            $this->info("Current UTC time: {$now->format('Y-m-d H:i:s')}");
+            $this->info("Current UTC time: {$nowUtc->format('Y-m-d H:i:s T')}");
             $this->info("Processing window: {$pastCutoff->format('Y-m-d H:i:s')} to {$futureCutoff->format('Y-m-d H:i:s')}");
 
             $totalDispatched = 0;
             
             // Get posts that should be processed
-            $posts = ScheduledPost::whereIn('status', ['pending', 'partially_sent'])->get();
-            
+            //$posts = ScheduledPost::whereIn('status', ['pending', 'partially_sent'])->get();
+            $posts = ScheduledPost::get();
             if ($posts->isEmpty()) {
                 $this->warn('No pending posts found!');
                 return 0;
@@ -79,7 +80,7 @@ class ProcessScheduledPosts extends Command
                     break;
                 }
 
-                $dispatched = $this->processPost($post, $now, $pastCutoff, $futureCutoff, $dryRun, $debug);
+                $dispatched = $this->processPost($post, $nowUtc, $pastCutoff, $futureCutoff, $dryRun, $debug);
                 $totalDispatched += $dispatched;
             }
 
@@ -89,7 +90,9 @@ class ProcessScheduledPosts extends Command
 
             if ($totalDispatched === 0) {
                 $this->warn('⚠️  NO JOBS DISPATCHED!');
-                $this->info('Times are outside processing window. Use --force to process future times.');
+                if (!$force) {
+                    $this->info('Try using --force to expand the processing window');
+                }
             } else {
                 $this->info("✅ {$totalDispatched} messages queued for sending!");
             }
@@ -101,7 +104,7 @@ class ProcessScheduledPosts extends Command
         }
     }
 
-    private function processPost($post, $now, $pastCutoff, $futureCutoff, $dryRun, $debug)
+    private function processPost($post, $nowUtc, $pastCutoff, $futureCutoff, $dryRun, $debug)
     {
         $dispatched = 0;
         $groupIds = $post->group_ids ?? [];
@@ -115,12 +118,40 @@ class ProcessScheduledPosts extends Command
         }
 
         if (empty($scheduleTimesUtc)) {
-            if ($debug) $this->warn("Post {$post->id}: No UTC schedule times");
-            return 0;
+            // Try to regenerate UTC times if missing
+            if (!empty($scheduleTimesUser) && $post->user_timezone) {
+                $this->warn("Post {$post->id}: Missing UTC times, regenerating...");
+                $newUtcTimes = [];
+                
+                foreach ($scheduleTimesUser as $userTime) {
+                    try {
+                        $userCarbon = Carbon::parse($userTime, $post->user_timezone);
+                        $newUtcTimes[] = $userCarbon->utc()->format('Y-m-d H:i:s');
+                    } catch (\Exception $e) {
+                        $this->error("Error converting time {$userTime}: " . $e->getMessage());
+                        continue;
+                    }
+                }
+                
+                if (!empty($newUtcTimes)) {
+                    $post->schedule_times_utc = $newUtcTimes;
+                    $post->save();
+                    $scheduleTimesUtc = $newUtcTimes;
+                    $this->info("✅ Regenerated UTC times for post {$post->id}");
+                }
+            }
+            
+            if (empty($scheduleTimesUtc)) {
+                if ($debug) $this->warn("Post {$post->id}: No UTC schedule times");
+                return 0;
+            }
         }
 
         if ($debug) {
-            $this->info("Processing Post {$post->id}: {$post->status}, " . count($scheduleTimesUtc) . " times, " . count($groupIds) . " groups");
+            $this->info("Processing Post {$post->id}: {$post->status}");
+            $this->info("  User timezone: " . ($post->user_timezone ?? 'None'));
+            $this->info("  Groups: " . count($groupIds));
+            $this->info("  Schedule times: " . count($scheduleTimesUtc));
         }
 
         foreach ($scheduleTimesUtc as $index => $scheduledTimeUtc) {
@@ -128,13 +159,25 @@ class ProcessScheduledPosts extends Command
                 $scheduledUtc = Carbon::parse($scheduledTimeUtc, 'UTC');
                 $originalScheduleTime = $scheduleTimesUser[$index] ?? $scheduledTimeUtc;
                 
-                // FIXED: Much more generous time window
+                // More generous time window checking
                 $isInWindow = $scheduledUtc->gte($pastCutoff) && $scheduledUtc->lte($futureCutoff);
                 
                 if ($debug) {
-                    $minutesFromNow = $now->diffInMinutes($scheduledUtc, false);
-                    $this->line("  Time {$index}: {$scheduledTimeUtc} ({$minutesFromNow} min) - " . 
-                              ($isInWindow ? 'IN WINDOW ✅' : 'OUTSIDE WINDOW ❌'));
+                    $minutesFromNow = $nowUtc->diffInMinutes($scheduledUtc, false);
+                    $this->line("  Time {$index}: {$originalScheduleTime} → {$scheduledTimeUtc}");
+                    $this->line("    Difference: {$minutesFromNow} minutes " . ($minutesFromNow > 0 ? 'ago' : 'from now'));
+                    $this->line("    In window: " . ($isInWindow ? 'YES ✅' : 'NO ❌'));
+                    
+                    if ($post->user_timezone && $post->user_timezone !== 'UTC') {
+                        try {
+                            $userNow = Carbon::now($post->user_timezone);
+                            $scheduledInUserTz = Carbon::parse($originalScheduleTime, $post->user_timezone);
+                            $userDiff = $userNow->diffInMinutes($scheduledInUserTz, false);
+                            $this->line("    User perspective: {$userDiff} minutes " . ($userDiff > 0 ? 'ago' : 'from now') . " in {$post->user_timezone}");
+                        } catch (\Exception $e) {
+                            $this->line("    User timezone error: " . $e->getMessage());
+                        }
+                    }
                 }
                 
                 if ($isInWindow) {
