@@ -1,0 +1,158 @@
+version: "3.8"
+
+services:
+  # MongoDB - Working config
+  mongodb:
+    image: mongo:7
+    container_name: scheduler-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+      - MONGO_INITDB_DATABASE=telegram_scheduler
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - telegram-scheduler
+
+  # Redis - Working config
+  redis:
+    image: redis:7-alpine
+    container_name: scheduler-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - telegram-scheduler
+    command: redis-server --appendonly yes
+
+  # Backend - Working config
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: scheduler-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - APP_KEY=base64:wtqQ/6f+i9YERhRjXUttSgRw4VCEtn+zSsCyZioemZs=
+      - APP_URL=http://localhost:8000
+      - DB_CONNECTION=mongodb
+      - MONGO_DB_CONNECTION=mongodb://admin:password@mongodb:27017/telegram_scheduler?authSource=admin
+      - DB_DATABASE=telegram_scheduler
+      - DB_AUTHENTICATION_DATABASE=admin
+      - QUEUE_CONNECTION=redis
+      - CACHE_STORE=redis
+      - SESSION_DRIVER=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_SECRET=fIXfC0pDOdYeYxRY35WcPYJgt07tXtfxGzRdRMlHMb4ytitTHbkT8YooO8w3Jxxj
+      - JWT_TTL=60
+      - JWT_REFRESH_TTL=20160
+      - TELEGRAM_BOT_TOKEN=7779533338:AAH-B1-r4GQzJStkyC7Ecziip7ccgso5AOs
+      - TELEGRAM_BOT_USERNAME=tgappy_bot
+      - ADMIN_TELEGRAM_IDS=6941596189
+      - CONTAINER_ROLE=app
+    volumes:
+      - ./backend:/var/www/html
+      - backend_storage:/var/www/html/storage
+    networks:
+      - telegram-scheduler
+    depends_on:
+      - mongodb
+      - redis
+
+  # Queue Worker - Working config
+  queue-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: scheduler-queue-worker
+    restart: unless-stopped
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - APP_KEY=base64:wtqQ/6f+i9YERhRjXUttSgRw4VCEtn+zSsCyZioemZs=
+      - DB_CONNECTION=mongodb
+      - MONGO_DB_CONNECTION=mongodb://admin:password@mongodb:27017/telegram_scheduler?authSource=admin
+      - DB_DATABASE=telegram_scheduler
+      - DB_AUTHENTICATION_DATABASE=admin
+      - QUEUE_CONNECTION=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_SECRET=fIXfC0pDOdYeYxRY35WcPYJgt07tXtfxGzRdRMlHMb4ytitTHbkT8YooO8w3Jxxj
+      - TELEGRAM_BOT_TOKEN=7779533338:AAH-B1-r4GQzJStkyC7Ecziip7ccgso5AOs
+      - CONTAINER_ROLE=queue
+    volumes:
+      - ./backend:/var/www/html
+      - backend_storage:/var/www/html/storage
+    networks:
+      - telegram-scheduler
+    depends_on:
+      - backend
+    command: php artisan queue:work redis --sleep=1 --tries=3 --max-time=3600 --memory=512
+
+  # Scheduler - FIXED to use correct command
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: scheduler-cron-fixed
+    restart: unless-stopped
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - APP_KEY=base64:wtqQ/6f+i9YERhRjXUttSgRw4VCEtn+zSsCyZioemZs=
+      - DB_CONNECTION=mongodb
+      - MONGO_DB_CONNECTION=mongodb://admin:password@mongodb:27017/telegram_scheduler?authSource=admin
+      - DB_DATABASE=telegram_scheduler
+      - DB_AUTHENTICATION_DATABASE=admin
+      - QUEUE_CONNECTION=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_SECRET=fIXfC0pDOdYeYxRY35WcPYJgt07tXtfxGzRdRMlHMb4ytitTHbkT8YooO8w3Jxxj
+      - TELEGRAM_BOT_TOKEN=7779533338:AAH-B1-r4GQzJStkyC7Ecziip7ccgso5AOs
+      - CONTAINER_ROLE=scheduler
+    volumes:
+      - ./backend:/var/www/html
+      - backend_storage:/var/www/html/storage
+    networks:
+      - telegram-scheduler
+    depends_on:
+      - backend
+    # FIXED: Use messages:send-due directly, not schedule:run
+    command: >
+      sh -c "
+        echo 'Starting FIXED scheduler with messages:send-due...'
+        while true; do
+          echo '[$(date)] Running messages:send-due...'
+          php artisan messages:send-due --window=5
+          echo '[$(date)] Completed. Sleeping 60 seconds...'
+          sleep 60
+        done
+      "
+
+networks:
+  telegram-scheduler:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local
+  backend_storage:
+    driver: local

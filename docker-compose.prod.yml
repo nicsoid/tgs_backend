@@ -1,0 +1,195 @@
+version: "3.8"
+
+services:
+  # Redis - High Performance Configuration
+  redis:
+    image: redis:7-alpine
+    container_name: scheduler-redis-prod
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    sysctls:
+      - net.core.somaxconn=65535
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+        reservations:
+          memory: 512M
+
+  # MongoDB - Optimized for High Writes
+  mongodb:
+    image: mongo:7
+    container_name: scheduler-mongodb-prod
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: telegram_scheduler
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongodb.conf:/etc/mongod.conf
+    command: mongod --config /etc/mongod.conf
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: scheduler-backend-prod
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - QUEUE_CONNECTION=redis
+      - REDIS_HOST=redis
+      - MONGO_DB_CONNECTION=mongodb://admin:${MONGO_PASSWORD}@mongodb:27017/telegram_scheduler?authSource=admin
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    volumes:
+      - backend_storage:/var/www/html/storage
+    depends_on:
+      - mongodb
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # Queue Workers - Multiple instances for parallel processing
+  queue-worker-high:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    environment:
+      - APP_ENV=production
+      - QUEUE_CONNECTION=redis
+      - REDIS_HOST=redis
+      - MONGO_DB_CONNECTION=mongodb://admin:${MONGO_PASSWORD}@mongodb:27017/telegram_scheduler?authSource=admin
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    volumes:
+      - backend_storage:/var/www/html/storage
+    depends_on:
+      - backend
+    command: php artisan queue:work redis --queue=telegram-high --sleep=1 --tries=3 --max-time=3600 --memory=256
+    deploy:
+      replicas: 2
+
+  queue-worker-medium:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    environment:
+      - APP_ENV=production
+      - QUEUE_CONNECTION=redis
+      - REDIS_HOST=redis
+      - MONGO_DB_CONNECTION=mongodb://admin:${MONGO_PASSWORD}@mongodb:27017/telegram_scheduler?authSource=admin
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    volumes:
+      - backend_storage:/var/www/html/storage
+    depends_on:
+      - backend
+    command: php artisan queue:work redis --queue=telegram-medium-1,telegram-medium-2 --sleep=1 --tries=3 --max-time=3600 --memory=256
+    deploy:
+      replicas: 3
+
+  queue-worker-low:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    environment:
+      - APP_ENV=production
+      - QUEUE_CONNECTION=redis
+      - REDIS_HOST=redis
+      - MONGO_DB_CONNECTION=mongodb://admin:${MONGO_PASSWORD}@mongodb:mongodb:27017/telegram_scheduler?authSource=admin
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    volumes:
+      - backend_storage:/var/www/html/storage
+    depends_on:
+      - backend
+    command: php artisan queue:work redis --queue=telegram-low --sleep=2 --tries=3 --max-time=3600 --memory=256
+    deploy:
+      replicas: 2
+
+  # Scheduler - Runs every minute
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    environment:
+      - APP_ENV=production
+      - QUEUE_CONNECTION=redis
+      - REDIS_HOST=redis
+      - MONGO_DB_CONNECTION=mongodb://admin:${MONGO_PASSWORD}@mongodb:27017/telegram_scheduler?authSource=admin
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    volumes:
+      - backend_storage:/var/www/html/storage
+    depends_on:
+      - backend
+    command: >
+      sh -c "
+        while true; do
+          php artisan messages:process-scheduled --batch-size=200 --max-dispatches=1000
+          sleep 60
+        done
+      "
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # Monitor - Queue and system monitoring
+  monitor:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    environment:
+      - APP_ENV=production
+      - QUEUE_CONNECTION=redis
+      - REDIS_HOST=redis
+      - MONGO_DB_CONNECTION=mongodb://admin:${MONGO_PASSWORD}@mongodb:27017/telegram_scheduler?authSource=admin
+    volumes:
+      - backend_storage:/var/www/html/storage
+    depends_on:
+      - backend
+    command: >
+      sh -c "
+        while true; do
+          php artisan queue:monitor
+          sleep 300
+        done
+      "
+
+volumes:
+  mongodb_data:
+  redis_data:
+  backend_storage:
+
+networks:
+  default:
+    driver: bridge
