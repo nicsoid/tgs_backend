@@ -199,27 +199,27 @@ services:
       "
 
   # Frontend (React) - runs on port 3000, accessible via ngrok
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      target: production
-    container_name: telegram-scheduler-frontend
-    restart: unless-stopped
-    ports:
-      - "3000:80"
-    environment:
-      # Frontend uses ngrok URL for Telegram Web App
-      # But API calls go to localhost:8000
-      - REACT_APP_API_URL=http://localhost:8000
-      - REACT_APP_TELEGRAM_BOT_USERNAME=tgappy_bot
-      - REACT_APP_FRONTEND_URL=https://68c6605bb77f.ngrok-free.app
-    networks:
-      - telegram-scheduler
-    depends_on:
-      - backend
-    profiles:
-      - frontend
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #     target: production
+  #   container_name: telegram-scheduler-frontend
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:80"
+  #   environment:
+  #     # Frontend uses ngrok URL for Telegram Web App
+  #     # But API calls go to localhost:8000
+  #     - REACT_APP_API_URL=http://localhost:8000
+  #     - REACT_APP_TELEGRAM_BOT_USERNAME=tgappy_bot
+  #     - REACT_APP_FRONTEND_URL=https://68c6605bb77f.ngrok-free.app
+  #   networks:
+  #     - telegram-scheduler
+  #   depends_on:
+  #     - backend
+  #   profiles:
+  #     - frontend
 
   # Redis UI (Optional - for monitoring)
   redis-commander:
